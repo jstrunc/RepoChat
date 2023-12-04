@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "RepoChat"
+version = "0.0.1"
+description = "AI tool for having conversation about a code repository."
+authors = ["Josef Strunc <josef.strunc@gmail.com>"]
+
+[tool.poetry.dependencies]
+# ^ locks the leftmost nonzero number, allows updates for others, ~ allows only for the patch version uptade
+python = "~3.11.5"
+#openai = "~1.2.3"
+langchain =  "~0.0.340"
+GitPython = "~3.1.40"
+streamlit = "~1.29.0"
+tiktoken = "~0.5.1"
+streamlit_javascript = "~0.1.5"
+streamlit-float = "~0.3.2"
+
+[tool.poetry.dev-dependencies]
+black = "^23.3.0"
+isort = "^5.11.5"
+
+[tool.black]
+line-length = 120
+skip-string-normalization = 1
+
+[tool.isort]
+profile = "black"
+multi_line_output = 1
+known_first_party = []
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry-core.masonry.api"

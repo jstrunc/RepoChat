@@ -3,10 +3,8 @@
 import os
 from typing import Any
 
-import pandas as pd
 from git import Repo
 from langchain.chains import ReduceDocumentsChain, RetrievalQAWithSourcesChain
-from langchain.chains.base import Chain
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
 from langchain.chains.llm import LLMChain
@@ -23,97 +21,193 @@ from langchain.memory import ConversationSummaryMemory
 from langchain.schema import BasePromptTemplate
 from langchain.schema.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.schema.language_model import BaseLanguageModel
-from langchain.schema.output_parser import BaseTransformOutputParser, StrOutputParser
+from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.vectorstore import VectorStore
 from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain_core.outputs import LLMResult
 from langchain_core.prompts import PromptTemplate
+from streamlit.delta_generator import DeltaGenerator
 
-def create_document_db_from_repo(repo_url: str) -> VectorStore:
-    repo_path = f"/tmp/repo_chat/{repo_url.split('/')[-1]}"
-    chroma_path = repo_path + "/chroma_db"
 
-    # create new DB with embeddings
-    if not os.path.exists(chroma_path) or 'chroma.sqlite3' not in os.listdir(chroma_path):
-        if os.path.exists(repo_path) and (repo_content := os.listdir(repo_path)) and '.git' in repo_content:
-            print(f"Repo already exists at {repo_path}")
-            repo = Repo(repo_path)
-            repo.remotes.origin.pull()
+class RepoRagChatAssistant:
+    """Assistant for retrieval augmented generation powered chat with sources from a repository."""
+
+    SUCCESS_MSG = "SUCCESS"
+    DB_FOLDER = "chroma_db"
+    REPO_FOLDER = "tmp"
+
+    def __init__(self, streamlit_output_placeholder: DeltaGenerator):
+        self.streamlit_output_placeholder = streamlit_output_placeholder
+        self.model = None
+        self.assistant_identity = None
+        self.db = None
+        self.retriever = None
+        self.memory = None
+        self.partial_steps_llm = None
+        self.combine_llm = None
+        self.repo_url = None
+        self.output_callback = None
+
+    @property
+    def db_path(self):
+        """Local path to the vector database."""
+        return os.path.join(self.repo_path, RepoRagChatAssistant.DB_FOLDER)
+
+    @property
+    def repo_path(self):
+        """Local path to the repository."""
+        assert self.repo_url is not None, "First set repo_url."
+        return os.path.join(RepoRagChatAssistant.REPO_FOLDER, self.repo_url.split('/')[-1])
+
+    def __call__(self, prompt):
+        return self.qa_chain.invoke(prompt)
+
+    def load_model(
+        self,
+        openai_api_key: str,
+        model: str,
+        assistant_identity: str,
+        temperature: float = 0.1,
+        max_tokens_per_generation: int = 500,
+    ):
+        """Create assistant's LLMs and memory."""
+        self.model = model
+        self.assistant_identity = assistant_identity
+        self.output_callback = StreamingOutCallbackHandler(self.streamlit_output_placeholder)
+
+        self.combine_llm = ChatOpenAI(
+            openai_api_key=openai_api_key,
+            model_name=model,
+            temperature=temperature,
+            max_tokens=max_tokens_per_generation,
+            streaming=True,
+            callbacks=[self.output_callback],
+        )
+        self.partial_steps_llm = ChatOpenAI(
+            openai_api_key=openai_api_key,
+            model_name=model,
+            temperature=temperature,
+            max_tokens=max_tokens_per_generation,
+        )
+        self.memory = ConversationSummaryMemory(
+            llm=self.partial_steps_llm,
+            memory_key="chat_history",
+            output_key='answer',
+            human_prefix="User",
+            ai_prefix="Assistant",
+            buffer=self.memory.buffer if self.memory else "",  # if reloading model, reuse the existing memory content
+        )
+
+        self.qa_chain = None  # loading new model invalidates the qa_chain
+
+        # if the repo/vector DB retriever is already loaded, we can create new qa_chain
+        if self.retriever:
+            self._create_qa_chain()
+
+        return RepoRagChatAssistant.SUCCESS_MSG
+
+    def load_repo(self, repo_url: str) -> None:
+        """Load the repository and create the vectore DB."""
+        self.repo_url = repo_url
+
+        if os.path.exists(self.db_path) and 'chroma.sqlite3' in os.listdir(self.db_path):
+            # repository was already cloned and DB was persisted - load existing DB
+            self.db = Chroma(
+                embedding_function=OpenAIEmbeddings(disallowed_special=()),
+                persist_directory=self.db_path,
+                collection_metadata={"hnsw:space": "cosine"},
+            )
         else:
-            repo = Repo.clone_from(repo_url, to_path=repo_path)
+            # clone/load repo and create new DB with embeddings
+            if (
+                os.path.exists(self.repo_path)
+                and (repo_content := os.listdir(self.repo_path))
+                and '.git' in repo_content
+            ):
+                repo = Repo(self.repo_path)
+                repo.remotes.origin.pull()
+            else:
+                try:
+                    repo = Repo.clone_from(repo_url, to_path=self.repo_path)
+                except GitCommandError as e:
+                    repo_not_found_msg = "Repository not found"
+                    if repo_not_found_msg in e.stderr:
+                        self.repo_url = None
+                        return f"{repo_not_found_msg} at URL: {repo_url}\nFix the URL and try again."
 
-        # Load
+            self.db = self._create_db_from_repo(self.repo_path)
+
+        self.retriever = self.db.as_retriever(
+            # "mmr" Maximum Marginal Relevance - optimizes for similarity to query and diversity among selected documents
+            search_type="similarity",  # or "mmr"
+            search_kwargs={"k": 4},
+        )
+
+        # loading new repo/DB invalidates the qa_chain and memory
+        self.qa_chain = None
+        self.memory = None
+
+        # if the model is already loaded, we can create new memory and qa_chain
+        if self.combine_llm and self.partial_steps_llm:
+            self.memory = ConversationSummaryMemory(
+                llm=self.partial_steps_llm,
+                memory_key="chat_history",
+                output_key='answer',
+                human_prefix="User",
+                ai_prefix="Assistant",
+            )
+            self._create_qa_chain()
+
+        return RepoRagChatAssistant.SUCCESS_MSG
+
+    def _create_db_from_repo(self, repo_path: str, persist: bool = True) -> VectorStore:
+        # Load all python files from repository path
         loader = GenericLoader.from_filesystem(
-            repo_path + "/src/genai",
+            repo_path,
             glob="**/*",
             suffixes=[".py"],
             parser=LanguageParser(language=Language.PYTHON, parser_threshold=500),
         )
-        documents = loader.load()
         python_splitter = RecursiveCharacterTextSplitter.from_language(
             Language.PYTHON, chunk_size=1000, chunk_overlap=200
         )
-        print(RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON))
-        texts = python_splitter.split_documents(documents)
+        texts = python_splitter.split_documents(loader.load())
 
+        # create new DB with embeddings
         db = Chroma.from_documents(
             texts,
             OpenAIEmbeddings(disallowed_special=()),
-            persist_directory=chroma_path,
-            collection_metadata={"hnsw:space": "cosine"},
-        )
-        db.persist()
-
-    else:
-        # load existing DB
-        db = Chroma(
-            embedding_function=OpenAIEmbeddings(disallowed_special=()),
-            persist_directory=chroma_path,
+            persist_directory=self.db_path,
             collection_metadata={"hnsw:space": "cosine"},
         )
 
-    return db
+        if persist:
+            db.persist()
 
+        return db
 
-def build_rag_chat_with_memory(openai_api_key: str, model: str, db: VectorStore, output_component) -> Chain:
-    retriever = db.as_retriever(
-        # "mmr" Maximum Marginal Relevance - optimizes for similarity to query and diversity among selected documents
-        search_type="similarity",
-        search_kwargs={"k": 4},
-    )
+    def _create_qa_chain(self) -> None:
+        self.output_callback.repo_url = self.repo_url
+        self.output_callback.repo_path = self.repo_path
 
-    callbacks_llm = ChatOpenAI(
-        openai_api_key=openai_api_key,
-        model_name=model,
-        streaming=True,
-        temperature=0.1,
-        max_tokens=500,
-        callbacks=[StreamingOutCallbackHandler(output_component)],
-    )
-    llm = ChatOpenAI(openai_api_key=openai_api_key, model_name=model, streaming=True, temperature=0.1, max_tokens=500)
-    # , streaming=True)  # token counting with get_openai_callback() doesn't work with streaming=True
-
-    memory = ConversationSummaryMemory(llm=llm, memory_key="chat_history", output_key='answer', return_messages=True)
-    qa = MyRetrievalQAWithSourcesChain.from_2llms(
-        question_llm=llm, combine_llm=callbacks_llm, retriever=retriever, memory=memory, return_source_documents=True
-    )
-
-    return qa
+        self.qa_chain = RepoRetrievalQAWithSourcesChain.from_llms(
+            assistant_identity=self.assistant_identity,
+            question_llm=self.partial_steps_llm,
+            combine_llm=self.combine_llm,
+            retriever=self.retriever,
+            memory=self.memory,
+            return_source_documents=True,
+        )
 
 
 class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
     """Callback handler for streaming. Only works with LLMs that support streaming."""
 
-    def __init__(
-        self,
-        output_streamlit_placeholder,
-        repo_url: str = "https://github.com/IBM/ibm-generative-ai",
-        repo_path: str = "/tmp/repo_chat/ibm-generative-ai",
-    ):
-        self.output_streamlit_placeholder = output_streamlit_placeholder
-        self.repo_url = repo_url
-        self.repo_path = repo_path
+    def __init__(self, streamlit_output_placeholder: DeltaGenerator):
+        self.streamlit_output_placeholder = streamlit_output_placeholder
+        self.repo_url = None
+        self.repo_path = None
         self.final_message = None
 
         self._message_buffer = ""
@@ -150,7 +244,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         streamed_message = self._message_buffer + "\n\nSources:" if (self._sources or self._message_buffer) else ""
         streamed_message += self._formatted_sources
         streamed_message += f"\n\n - {self._source_buffer}" if self._source_buffer else ""
-        self.output_streamlit_placeholder.markdown(streamed_message)
+        self.streamlit_output_placeholder.markdown(streamed_message)
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         """Run when LLM ends running."""
@@ -159,7 +253,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
             self._sources.append(self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/tree/main"))
 
         self.final_message = self._message_buffer + f"\n\nSources: {self._formatted_sources}" if self._sources else ""
-        self.output_streamlit_placeholder.markdown(self.final_message)
+        self.streamlit_output_placeholder.markdown(self.final_message)
         # self.output_streamlit_placeholder.markdown(
         #     pd.DataFrame(self._sources).to_html(render_links=True), unsafe_allow_html=True
         # )
@@ -200,7 +294,7 @@ class TunesListParams(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")\n
     limit: Optional[int] = Field(None, description=tx.LIMIT, le=100)
     offset: Optional[int] = Field(None, description=tx.OFFSET)
-Source: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/tunes_params.py
+Source: tmp/ibm-generative-ai/src/genai/schemas/tunes_params.py
 Content: from typing import Optional\n
 from pydantic import BaseModel, ConfigDict, Field\n
 from genai.schemas.descriptions import FilesAPIDescriptions as tx\n\n
@@ -209,10 +303,10 @@ class FileListParams(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")\n
     limit: Optional[int] = Field(None, description=tx.LIMIT, le=100)
     offset: Optional[int] = Field(None, description=tx.OFFSET)
-Source: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/files_params.py
+Source: tmp/ibm-generative-ai/src/genai/schemas/files_params.py
 =========
 FINAL ANSWER: Class used for holding the parameters for listing tunes is TunesListParams.
-SOURCES: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/tunes_params.py
+SOURCES: tmp/ibm-generative-ai/src/genai/schemas/tunes_params.py
 
 
 CHAT HISTORY: {chat_history}

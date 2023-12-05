@@ -114,6 +114,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         self.output_streamlit_placeholder = output_streamlit_placeholder
         self.repo_url = repo_url
         self.repo_path = repo_path
+        self.final_message = None
 
         self._message_buffer = ""
         self._source_buffer = ""
@@ -123,7 +124,9 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
     @property
     def _formatted_sources(self) -> str:
         """String in streamlit markdown format with sources in a bullet list with clickable links."""
-        return "\n\n - ".join([f"[{source}]({source})" for source in self._sources])
+        sources_bullet_list = "\n\n - ".join([f"[{source}]({source})" for source in self._sources])
+        sources_bullet_list = f"\n\n - {sources_bullet_list}" if sources_bullet_list else ""
+        return sources_bullet_list
 
     def on_llm_new_token(self, token: str, **kwargs: Any) -> None:
         """Parses each new incoming token and prints formatted message to the streamlit output placeholder.
@@ -134,7 +137,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         if self._parsing_message:
             self._message_buffer += token
             if "\nSOURCES:" in self._message_buffer:
-                self._message_buffer = self._message_buffer.replace("\nSOURCES:", "\n\nSources:\n\n - ")
+                self._message_buffer = self._message_buffer.replace("\nSOURCES:", "")
                 self._parsing_message = False
         else:  # parsing sources
             if token == ",":  # append complete source url - change local repo path to url
@@ -144,13 +147,19 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
             else:  # continue parsing single source
                 self._source_buffer += token
 
-        streamed_message = self._message_buffer + self._formatted_sources
-        streamed_message += f"\n\n - {self._source_buffer}" if (self._sources and self._source_buffer) else ""
+        streamed_message = self._message_buffer + "\n\nSources:" if (self._sources or self._message_buffer) else ""
+        streamed_message += self._formatted_sources
+        streamed_message += f"\n\n - {self._source_buffer}" if self._source_buffer else ""
         self.output_streamlit_placeholder.markdown(streamed_message)
 
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         """Run when LLM ends running."""
-        self.output_streamlit_placeholder.markdown(self._message_buffer + self._formatted_sources)
+        # source still in buffer:
+        if self._source_buffer:
+            self._sources.append(self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/tree/main"))
+
+        self.final_message = self._message_buffer + f"\n\nSources: {self._formatted_sources}" if self._sources else ""
+        self.output_streamlit_placeholder.markdown(self.final_message)
         # self.output_streamlit_placeholder.markdown(
         #     pd.DataFrame(self._sources).to_html(render_links=True), unsafe_allow_html=True
         # )

@@ -106,10 +106,14 @@ if "model" not in st.session_state:
 
         # TODO: Host on Azure
 
-assistant_identity = (
-    'You are a top AI researcher from OpenAI, ' 'previously working at Google Brain with PhD from Stanford'
-)
+""" Loading new model:
+TODO:
+- creates new LLMs, stores them in session state
+    - informs that the model is loaded
+- if retriever already exists: creates new qa_chain
+- if memory object is not empty - informs that we are using the same memory/conversation
 
+"""
 with st.sidebar.form(key='model_form'):
     st.markdown("## Assistant settings")
     st.session_state["openai_api_key"] = st.text_input(
@@ -126,6 +130,16 @@ with st.sidebar.form(key='model_form'):
         # TODO: It is not necessary to delete messages, just create a new qa_chain with a new model
 
 
+""" Loading new repository:
+TODO:
+- clones repo
+- creates new database and retriever, stores retriever in session state
+  - informs that the repo is loaded
+- creates new memory object
+- if memory already exists: resets the conversation (history not relevant when talking about new repo)
+  - informs memory and conv. history were reset
+- if the LLMs already exists (API key works) - create the qa_chain
+"""
 with st.sidebar.form(key='repo_url_form'):
     st.markdown("## Repository")
     repo_url = st.text_input('URL:', value=default_repo_url)
@@ -168,9 +182,9 @@ if st.session_state["qa_chain"]:
             st.session_state["streaming_out_callback"].output_streamlit_placeholder = st.empty()
             with st.spinner("Retrieving documents from vector store & composing the answer..."):
                 # prompt = "Which methods has the Credentials class?"
-                result = st.session_state["qa_chain"].invoke(prompt)
+                result = st.session_state["qa_chain"].invoke(
+                    prompt
         st.session_state.messages.append({"role": "assistant", "content": result['answer']})
-        print(result)
 
 else:
     st.sidebar.error(f"Repository {st.session_state['repo_url']} not loaded")

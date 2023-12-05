@@ -12,7 +12,6 @@ from langchain.chains.combine_documents.stuff import StuffDocumentsChain
 from langchain.chains.llm import LLMChain
 from langchain.chains.qa_with_sources.base import BaseQAWithSourcesChain
 from langchain.chains.qa_with_sources.map_reduce_prompt import (
-    COMBINE_PROMPT,
     EXAMPLE_PROMPT,
     QUESTION_PROMPT,
 )
@@ -24,11 +23,12 @@ from langchain.memory import ConversationSummaryMemory
 from langchain.schema import BasePromptTemplate
 from langchain.schema.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.schema.language_model import BaseLanguageModel
+from langchain.schema.output_parser import BaseTransformOutputParser, StrOutputParser
 from langchain.schema.vectorstore import VectorStore
 from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain_core.outputs import LLMResult
-
+from langchain_core.prompts import PromptTemplate
 
 def create_document_db_from_repo(repo_url: str) -> VectorStore:
     repo_path = f"/tmp/repo_chat/{repo_url.split('/')[-1]}"
@@ -163,9 +163,6 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         self._parsing_message = True
 
 
-from langchain.schema.output_parser import BaseTransformOutputParser, StrOutputParser
-
-
 class MyStrOutputParser(StrOutputParser):
     """OutputParser that parses LLMResult into the top likely string."""
 
@@ -174,8 +171,61 @@ class MyStrOutputParser(StrOutputParser):
         return result['answer']
 
 
-class MyRetrievalQAWithSourcesChain(RetrievalQAWithSourcesChain):
-    """Question answering chain with sources over documents with option to set question and combine LLM individually."""
+repo_combine_prompt_template = """{assistant_identity}\n
+Given the chat history, the question and the extracted parts of multiple source files with programming code, all from one repository, create a final answer with references ("SOURCES"). 
+If there is no relevant information in the sources summaries, look for it in the last CHAT HISTORY.
+If you still don't know the answer, just say that you don't know. Don't try to make up an answer.
+If the QUESTION is not an actual question, just a statement, just answer accordingly, e.g.: "Ok.", "Got it.", "Thank you." or "Sure.", ignore the given extracted content.
+ALWAYS return a "SOURCES" part in your answer.
+
+CHAT HISTORY: The user asks which classes are available that are derived from BaseMessage. The assistant responds with: "The available child classes of BaseMessage are: HumanMessage, SystemMessage and AIMessage."
+=========
+QUESTION: Which class is used for holding the parameters for listing tunes?
+=========
+Content: from typing import Optional\n
+from pydantic import BaseModel, ConfigDict, Field\n
+# TODO: Update the descriptions import
+from genai.schemas.descriptions import TunesAPIDescriptions as tx\n\n
+class TunesListParams(BaseModel):
+    \"\"\"Class to hold the parameters for listing tunes.\"\"\"\n
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")\n
+    limit: Optional[int] = Field(None, description=tx.LIMIT, le=100)
+    offset: Optional[int] = Field(None, description=tx.OFFSET)
+Source: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/tunes_params.py
+Content: from typing import Optional\n
+from pydantic import BaseModel, ConfigDict, Field\n
+from genai.schemas.descriptions import FilesAPIDescriptions as tx\n\n
+class FileListParams(BaseModel):
+    \"\"\"Class to hold the parameters for file listing.\"\"\"\n
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")\n
+    limit: Optional[int] = Field(None, description=tx.LIMIT, le=100)
+    offset: Optional[int] = Field(None, description=tx.OFFSET)
+Source: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/files_params.py
+=========
+FINAL ANSWER: Class used for holding the parameters for listing tunes is TunesListParams.
+SOURCES: /tmp/repo_chat/ibm-generative-ai/src/genai/schemas/tunes_params.py
+
+
+CHAT HISTORY: {chat_history}
+=========
+QUESTION: {question}
+=========
+{summaries}
+=========
+FINAL ANSWER:"""
+REPO_COMBINE_PROMPT = PromptTemplate(
+    template=repo_combine_prompt_template,
+    input_variables=["assistant_identity", "summaries", "question", "chat_history"],
+)
+
+
+class RepoRetrievalQAWithSourcesChain(RetrievalQAWithSourcesChain):
+    """Custom repository question answering chain summarizing the question-relevant parts of retrieved documents.
+
+    Uses one LLM to summarize only the question-relevant parts of the retrieved code chunks and another to combine
+    the question, chat history and the summaries into a final answer. The combine LLM prompt contains a single shot
+    example. The combine LLM is also personalized with the assistant identity.
+    """
 
     # output_parser: BaseTransformOutputParser = MyStrOutputParser()
 
@@ -184,16 +234,18 @@ class MyRetrievalQAWithSourcesChain(RetrievalQAWithSourcesChain):
     #     self.output_parser = StrOutputParser()
 
     @classmethod
-    def from_2llms(
+    def from_llms(
         cls,
+        assistant_identity: str,
         question_llm: BaseLanguageModel,
         combine_llm: BaseLanguageModel,
         document_prompt: BasePromptTemplate = EXAMPLE_PROMPT,
         question_prompt: BasePromptTemplate = QUESTION_PROMPT,
-        combine_prompt: BasePromptTemplate = COMBINE_PROMPT,
+        combine_prompt: BasePromptTemplate = REPO_COMBINE_PROMPT,
         **kwargs: Any,
     ) -> BaseQAWithSourcesChain:
         """Construct the chain from an LLM."""
+        combine_prompt = combine_prompt.partial(assistant_identity=assistant_identity)
         llm_question_chain = LLMChain(llm=question_llm, prompt=question_prompt)
         llm_combine_chain = LLMChain(llm=combine_llm, prompt=combine_prompt)
         combine_results_chain = StuffDocumentsChain(

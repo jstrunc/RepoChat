@@ -6,16 +6,20 @@ from langchain.chat_models import ChatOpenAI
 from langchain.memory import ConversationSummaryMemory
 
 from utils import (
-    MyRetrievalQAWithSourcesChain,
     MyStrOutputParser,
+    RepoRetrievalQAWithSourcesChain,
     StreamingOutCallbackHandler,
     build_rag_chat_with_memory,
     create_document_db_from_repo,
 )
 
-api_key_default = os.environ["OPENAI_API_KEY"]
+api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
+default_assistant_identity = (
+    "You are a top ex Google software engineer, you are really good at understanding code and answering questions"
+    " about any code repository."
+)
 
 st.set_page_config(page_title="RepoChat", layout="wide")
 st.title("RepoChat")
@@ -61,7 +65,11 @@ if "model" not in st.session_state:
     # , streaming=True)  # token counting with get_openai_callback() doesn't work with streaming=True
 
     st.session_state["memory"] = ConversationSummaryMemory(
-        llm=st.session_state["partial_steps_llm"], memory_key="chat_history", output_key='answer', return_messages=True
+        llm=st.session_state["partial_steps_llm"],
+        memory_key="chat_history",
+        output_key='answer',
+        human_prefix="User",
+        ai_prefix="Assistant",
     )
 
     if (
@@ -72,10 +80,11 @@ if "model" not in st.session_state:
     ):
         retriever = st.session_state["db"].as_retriever(
             # "mmr" Maximum Marginal Relevance - optimizes for similarity to query and diversity among selected documents
-            search_type="similarity",
+            search_type="similarity",  # or "mmr"
             search_kwargs={"k": 4},
         )
-        st.session_state["qa_chain"] = MyRetrievalQAWithSourcesChain.from_2llms(
+        st.session_state["qa_chain"] = RepoRetrievalQAWithSourcesChain.from_llms(
+            assistant_identity=default_assistant_identity,
             question_llm=st.session_state["partial_steps_llm"],
             combine_llm=st.session_state["combine_llm"],
             retriever=retriever,
@@ -103,9 +112,13 @@ assistant_identity = (
 
 with st.sidebar.form(key='model_form'):
     st.markdown("## Assistant settings")
-    openai_api_key = st.text_input('OpenAI API key:', value=api_key_default if api_key_default else '')
-    st.text_area('Assistant identity:', value=assistant_identity, height=30)
-    model = st.selectbox('Model:', available_models, index=0)
+    st.session_state["openai_api_key"] = st.text_input(
+        'OpenAI API key:', value=api_key_default if api_key_default else ''
+    )
+    st.session_state["assistant_identity"] = st.text_area(
+        'Assistant identity:', value=default_assistant_identity, height=30
+    )
+    st.session_state["model"] = st.selectbox('Model:', available_models, index=0)
 
     if st.form_submit_button(label='Re/load model'):
         pass

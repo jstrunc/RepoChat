@@ -50,17 +50,17 @@ if "default_repo_tried" not in st.session_state:
 #     can be anything for now)
 #     - if retriever already exists: creates new qa_chain in the assistant
 #     - if memory already exists it is reused
-with st.sidebar.form(key='model_form'):
+with st.sidebar.form(key="assistant_form"):
     st.markdown("## Assistant settings")
-    openai_api_key = st.text_input('OpenAI API key:', value=api_key_default)
+    openai_api_key = st.text_input("OpenAI API key:", value=api_key_default)
     assistant_identity = st.text_area(
-        'Assistant identity:',
+        "Assistant identity:",
         value=default_assistant_identity,
         height=50,
         help="Type any description of \"personality\" of the assistant. "
         "\n\nThis text is prepended to every internally constructed prompt.",
     )
-    model = st.selectbox('Model:', available_models, index=0)  # if SB is edited, no option is selected, it returns None
+    model = st.selectbox("Model:", available_models, index=0)  # if SB is edited, no option is selected, it returns None
 
     load_model_clicked = st.form_submit_button(
         label="Load model",
@@ -73,7 +73,7 @@ with st.sidebar.form(key='model_form'):
         if result != RepoRagChatAssistant.SUCCESS_MSG:
             st.error(result)
     if st.session_state["assistant"].model:
-        st.success(f"Model {st.session_state['assistant'].model} loaded")
+        st.success(f"Model {st.session_state["assistant"].model} loaded")
 
     st.session_state["default_model_tried"] = True
 
@@ -87,12 +87,12 @@ with st.sidebar.form(key='model_form'):
 #    - creates new memory object - any existing conversation about different repo is not relevant
 #    - if the model was loaded (LLMs already exist, API key works) - creates the final qa_chain in Assistant
 # 3) Informs about the un/success of loading repo (creating vector db)
-with st.sidebar.form(key='repo_url_form'):
+with st.sidebar.form(key="repo_url_form"):
     st.markdown("## Repository")
-    repo_url = st.text_input('URL:', value=default_repo_url)
+    repo_url = st.text_input("URL:", value=default_repo_url)
 
     load_repository_clicked = st.form_submit_button(
-        label='Load repository',
+        label="Load repository",
         help="Loads the repository on the given URL.\n\nAny existing conversation is deleted ",
     )
     if load_repository_clicked or not st.session_state["default_repo_tried"]:
@@ -130,7 +130,7 @@ if st.session_state["assistant"].qa_chain:
             st.session_state["assistant"].output_callback.streamlit_output_placeholder = st.empty()
             with st.spinner("Retrieving documents from vector DB & composing the answer..."):
                 result = st.session_state["assistant"](prompt)
-        st.session_state.messages.append({"role": "assistant", "content": result['answer']})
+        st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
 
         st.rerun()  # to show the active chat_input again
 

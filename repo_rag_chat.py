@@ -58,7 +58,7 @@ class RepoRagChatAssistant:
     def repo_path(self):
         """Local path to the repository."""
         assert self.repo_url is not None, "First set repo_url."
-        return os.path.join(RepoRagChatAssistant.REPO_FOLDER, self.repo_url.split('/')[-1])
+        return os.path.join(RepoRagChatAssistant.REPO_FOLDER, self.repo_url.split("/")[-1])
 
     def __call__(self, prompt):
         return self.qa_chain.invoke(prompt)
@@ -93,7 +93,7 @@ class RepoRagChatAssistant:
         self.memory = ConversationSummaryMemory(
             llm=self.partial_steps_llm,
             memory_key="chat_history",
-            output_key='answer',
+            output_key="answer",
             human_prefix="User",
             ai_prefix="Assistant",
             buffer=self.memory.buffer if self.memory else "",  # if reloading model, reuse the existing memory content
@@ -111,7 +111,7 @@ class RepoRagChatAssistant:
         """Load the repository and create the vectore DB."""
         self.repo_url = repo_url
 
-        if os.path.exists(self.db_path) and 'chroma.sqlite3' in os.listdir(self.db_path):
+        if os.path.exists(self.db_path) and "chroma.sqlite3" in os.listdir(self.db_path):
             # repository was already cloned and DB was persisted - load existing DB
             self.db = Chroma(
                 embedding_function=OpenAIEmbeddings(disallowed_special=()),
@@ -123,7 +123,7 @@ class RepoRagChatAssistant:
             if (
                 os.path.exists(self.repo_path)
                 and (repo_content := os.listdir(self.repo_path))
-                and '.git' in repo_content
+                and ".git" in repo_content
             ):
                 repo = Repo(self.repo_path)
                 repo.remotes.origin.pull()
@@ -153,7 +153,7 @@ class RepoRagChatAssistant:
             self.memory = ConversationSummaryMemory(
                 llm=self.partial_steps_llm,
                 memory_key="chat_history",
-                output_key='answer',
+                output_key="answer",
                 human_prefix="User",
                 ai_prefix="Assistant",
             )
@@ -271,7 +271,7 @@ class MyStrOutputParser(StrOutputParser):
 
     def parse(self, result: dict) -> str:
         """Returns the input text with no changes."""
-        return result['answer']
+        return result["answer"]
 
 
 repo_combine_prompt_template = """{assistant_identity}\n

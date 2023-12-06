@@ -48,6 +48,7 @@ class RepoRagChatAssistant:
         self.combine_llm = None
         self.repo_url = None
         self.output_callback = None
+        self.last_formatted_message = None
 
     @property
     def db_path(self):
@@ -61,7 +62,9 @@ class RepoRagChatAssistant:
         return os.path.join(RepoRagChatAssistant.REPO_FOLDER, self.repo_url.split("/")[-1])
 
     def __call__(self, prompt):
-        return self.qa_chain.invoke(prompt)
+        result = self.qa_chain.invoke(prompt)
+        self.last_formatted_message = self.output_callback.final_message
+        return result
 
     def load_model(
         self,
@@ -204,12 +207,14 @@ class RepoRagChatAssistant:
 class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
     """Callback handler for streaming. Only works with LLMs that support streaming."""
 
+    SOURCES_IDENTIFIER = "\nSOURCES:"
+    SOURCES_MSG = "Checked documents:"
+
     def __init__(self, streamlit_output_placeholder: DeltaGenerator):
         self.streamlit_output_placeholder = streamlit_output_placeholder
         self.repo_url = None
         self.repo_path = None
-        self.final_message = None
-
+        self.final_message = ""
         self._message_buffer = ""
         self._source_buffer = ""
         self._sources = []
@@ -230,8 +235,8 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         """
         if self._parsing_message:
             self._message_buffer += token
-            if "\nSOURCES:" in self._message_buffer:
-                self._message_buffer = self._message_buffer.replace("\nSOURCES:", "")
+            if StreamingOutCallbackHandler.SOURCES_IDENTIFIER in self._message_buffer:
+                self._message_buffer = self._message_buffer.replace(StreamingOutCallbackHandler.SOURCES_IDENTIFIER, "")
                 self._parsing_message = False
         else:  # parsing sources
             if token == ",":  # append complete source url - change local repo path to url
@@ -241,7 +246,11 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
             else:  # continue parsing single source
                 self._source_buffer += token
 
-        streamed_message = self._message_buffer + "\n\nSources:" if (self._sources or self._message_buffer) else ""
+        streamed_message = (
+            self._message_buffer + f"\n\n{StreamingOutCallbackHandler.SOURCES_MSG}"
+            if (self._sources or self._message_buffer)
+            else ""
+        )
         streamed_message += self._formatted_sources
         streamed_message += f"\n\n - {self._source_buffer}" if self._source_buffer else ""
         self.streamlit_output_placeholder.markdown(streamed_message)
@@ -252,7 +261,10 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         if self._source_buffer:
             self._sources.append(self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/tree/main"))
 
-        self.final_message = self._message_buffer + f"\n\nSources: {self._formatted_sources}" if self._sources else ""
+        if self._sources:
+            self.final_message = (
+                self._message_buffer + f"\n\n{StreamingOutCallbackHandler.SOURCES_MSG} {self._formatted_sources}"
+            )
         self.streamlit_output_placeholder.markdown(self.final_message)
         # self.output_streamlit_placeholder.markdown(
         #     pd.DataFrame(self._sources).to_html(render_links=True), unsafe_allow_html=True

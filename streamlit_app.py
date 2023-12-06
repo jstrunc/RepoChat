@@ -2,7 +2,7 @@ import os
 
 import streamlit as st
 
-from utils import RepoRagChatAssistant
+from repo_rag_chat import RepoRagChatAssistant
 
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")

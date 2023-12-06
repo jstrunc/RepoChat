@@ -53,12 +53,23 @@ if "default_repo_tried" not in st.session_state:
 with st.sidebar.form(key='model_form'):
     st.markdown("## Assistant settings")
     openai_api_key = st.text_input('OpenAI API key:', value=api_key_default)
-    assistant_identity = st.text_area('Assistant identity:', value=default_assistant_identity, height=30)
-    model = st.selectbox('Model:', available_models, index=0)
+    assistant_identity = st.text_area(
+        'Assistant identity:',
+        value=default_assistant_identity,
+        height=50,
+        help="Type any description of \"personality\" of the assistant. "
+        "\n\nThis text is prepended to every internally constructed prompt.",
+    )
+    model = st.selectbox('Model:', available_models, index=0)  # if SB is edited, no option is selected, it returns None
 
+    load_model_clicked = st.form_submit_button(
+        label="Load model",
+        help="Loads the model with the settings above. \n\nKeeps any existing conversation in memory ",
+    )
     # on submit button click or on initial load (loading default model)
-    if openai_api_key and (st.form_submit_button(label='Re/load model') or not st.session_state["default_model_tried"]):
-        result = st.session_state["assistant"].load_model(openai_api_key, model, assistant_identity)
+    if openai_api_key and model and (load_model_clicked or not st.session_state["default_model_tried"]):
+        with st.spinner("Loading model..."):
+            result = st.session_state["assistant"].load_model(openai_api_key, model, assistant_identity)
         if result != RepoRagChatAssistant.SUCCESS_MSG:
             st.error(result)
     if st.session_state["assistant"].model:
@@ -80,9 +91,14 @@ with st.sidebar.form(key='repo_url_form'):
     st.markdown("## Repository")
     repo_url = st.text_input('URL:', value=default_repo_url)
 
-    if st.form_submit_button(label='Load repository') or not st.session_state["default_repo_tried"]:
+    load_repository_clicked = st.form_submit_button(
+        label='Load repository',
+        help="Loads the repository on the given URL.\n\nAny existing conversation is deleted ",
+    )
+    if load_repository_clicked or not st.session_state["default_repo_tried"]:
         if repo_url != st.session_state["assistant"].repo_url:
-            message = st.session_state["assistant"].load_repo(repo_url)
+            with st.spinner("Loading repository..."):
+                message = st.session_state["assistant"].load_repo(repo_url)
             if message == RepoRagChatAssistant.SUCCESS_MSG:
                 st.session_state.messages = []
             else:

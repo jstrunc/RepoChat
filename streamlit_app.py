@@ -4,6 +4,10 @@ import streamlit as st
 
 from repo_rag_chat import RepoRagChatAssistant
 
+# TODO: Add controls for specifying the number of retrieved documents, token limit, ...
+# TODO: Add the ability to perform Google/DuckDuckGo searches
+# TODO: Add input format validation
+
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
@@ -138,6 +142,26 @@ if st.session_state["assistant"].qa_chain:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if "full_result" in message:
+                docs_with_similarity = st.session_state["assistant"].db.similarity_search_with_score(
+                    message["full_result"]["question"]
+                )
+
+                with st.expander("Full result"):
+                    st.markdown(f"### Sources used for generating the final answer: \n")
+                    # st.markdown("- ".join([doc for doc in list(message['full_result']['sources'])]))
+                    st.markdown(message['full_result']['sources'])
+                    st.markdown(
+                        "### All documents retrieved from the vector DB with contents and similarity scores."
+                        "\n(Sorted, the most similar on the top. Lower score represents more similarity.)"
+                    )
+                    for i, doc in enumerate(message["full_result"]["source_documents"]):
+                        # double check that db.similarity_search_with_score returned the same docs in the same order
+                        assert doc.metadata["source"] == docs_with_similarity[i][0].metadata["source"]
+                        st.markdown(
+                            f"##### {i+1}. Score: {docs_with_similarity[i][1]:.4f}: \n**{doc.metadata['source']}**"
+                        )
+                        st.code(doc.page_content)
 
     if prompt := st.chat_input(f"Ask a question about {st.session_state['assistant'].repo_url}", key="chat_input"):
         # hacky way to disable the chat input while the assistant is working
@@ -152,7 +176,11 @@ if st.session_state["assistant"].qa_chain:
             with st.spinner("Retrieving documents from vector DB & composing the answer..."):
                 result = st.session_state["assistant"](prompt)
         st.session_state.messages.append(
-            {"role": "assistant", "content": st.session_state["assistant"].last_formatted_message}
+            {
+                "role": "assistant",
+                "content": st.session_state["assistant"].last_formatted_message,
+                "full_result": result,
+            }
         )
 
         st.rerun()  # to show the active chat_input again

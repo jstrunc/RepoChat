@@ -7,6 +7,10 @@ from repo_rag_chat import RepoRagChatAssistant
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
+initial_message = {
+    "role": "assistant",
+    "content": "Hi, I'm RepoChat. I can answer questions about any code repository.",
+}
 default_assistant_identity = (
     "You are a top ex Google software engineer, you are really good at understanding code and answering questions"
     " about any code repository."
@@ -19,7 +23,7 @@ if "message_placeholder" not in st.session_state:
     st.session_state["message_placeholder"] = st.empty()
 
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [initial_message]
 
 if "assistant" not in st.session_state:
     st.session_state["assistant"] = RepoRagChatAssistant(st.session_state["message_placeholder"])
@@ -56,7 +60,7 @@ with st.sidebar.form(key="assistant_form"):
     assistant_identity = st.text_area(
         "Assistant identity:",
         value=default_assistant_identity,
-        height=50,
+        height=120,
         help="Type any description of \"personality\" of the assistant. "
         "\n\nThis text is prepended to every internally constructed prompt.",
     )
@@ -70,10 +74,14 @@ with st.sidebar.form(key="assistant_form"):
     if openai_api_key and model and (load_model_clicked or not st.session_state["default_model_tried"]):
         with st.spinner("Loading model..."):
             result = st.session_state["assistant"].load_model(openai_api_key, model, assistant_identity)
-        if result != RepoRagChatAssistant.SUCCESS_MSG:
+        if result == RepoRagChatAssistant.SUCCESS_MSG:
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"I am now using the model **{model}** internally."}
+            )
+        else:
             st.error(result)
     if st.session_state["assistant"].model:
-        st.success(f"Model {st.session_state["assistant"].model} loaded")
+        st.success(f"Model **{st.session_state['assistant'].model}** loaded.")
 
     st.session_state["default_model_tried"] = True
 
@@ -100,14 +108,18 @@ with st.sidebar.form(key="repo_url_form"):
             with st.spinner("Loading repository..."):
                 message = st.session_state["assistant"].load_repo(repo_url)
             if message == RepoRagChatAssistant.SUCCESS_MSG:
-                st.session_state.messages = []
+                if st.session_state["default_repo_tried"]:
+                    st.session_state.messages = [initial_message]
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"I loaded the repository **{repo_url}**."}
+                )
             else:
                 st.error(message)
         else:
             st.markdown("This repository is already loaded.")
 
     if st.session_state["assistant"].repo_url:
-        st.success(f"Repository {st.session_state['assistant'].repo_url} loaded")
+        st.success(f"Repository **{st.session_state['assistant'].repo_url}** loaded.")
 
     st.session_state["default_repo_tried"] = True
 
@@ -130,7 +142,9 @@ if st.session_state["assistant"].qa_chain:
             st.session_state["assistant"].output_callback.streamlit_output_placeholder = st.empty()
             with st.spinner("Retrieving documents from vector DB & composing the answer..."):
                 result = st.session_state["assistant"](prompt)
-        st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
+        st.session_state.messages.append(
+            {"role": "assistant", "content": st.session_state["assistant"].last_formatted_message}
+        )
 
         st.rerun()  # to show the active chat_input again
 

@@ -7,6 +7,7 @@ from repo_rag_chat import RepoRagChatAssistant
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
+default_repo_local_path = "/tmp/repo_chat"
 initial_message = {
     "role": "assistant",
     "content": "Hi, I'm RepoChat. I can answer questions about any code repository.",
@@ -34,18 +35,21 @@ if "default_model_tried" not in st.session_state:
 if "default_repo_tried" not in st.session_state:
     st.session_state["default_repo_tried"] = False
 
-# add parser to format the output text into html
+sidebar_tab_settings, sidebar_tab_about = st.sidebar.tabs(["Settings", "About"])
 
-# TODO: Add a formatter to the chain to display source documents as clickable web links in markdown format
-# and display cosine similarity of the sources, optionally add a popup with relevant text found
-# Add controls for specifying the number of retrieved documents, token limit, ...
-
-# TODO: Add the ability to perform Google/DuckDuckGo searches
-
-# TODO: Add input format validation
-# TODO: Add a collapsible menu in the sidebar with information about the application, possibly about the repository, and a settings tab
-
-# TODO: Host on Azure
+with sidebar_tab_about:
+    st.markdown(
+        "### RepoChat is a conversational AI assistant that can answer questions about code repositories."
+        "\n\n ## Features: \n"
+        "- **Conversational** - you can ask multiple questions in one conversation\n"
+        "- **Context-aware** - the assistant remembers the conversation history and can use it to answer questions\n"
+        "- **Retrieval augmented generation** - the assistant uses a vector store to find relevant information\n"
+        "- **Jump to information source** - The files identified as sources of information relevant to the question"
+        " are provided together with the answers in the form of clickable links\n"
+        "- **Open-domain** - the assistant can answer questions about any code repository\n"
+        "- **Open-ended** - the assistant can answer questions that are not explicitly mentioned in the repository\n"
+        "\n\n ## Author: \n[Josef Strunc](mailto:josef.strunc@gmail.com)"
+    )
 
 # Loading new model:
 # 1) Read inputs from the UI
@@ -54,8 +58,8 @@ if "default_repo_tried" not in st.session_state:
 #     can be anything for now)
 #     - if retriever already exists: creates new qa_chain in the assistant
 #     - if memory already exists it is reused
-with st.sidebar.form(key="assistant_form"):
-    st.markdown("## Assistant settings")
+with sidebar_tab_settings.form(key="assistant_form"):
+    st.markdown("## Assistant")
     openai_api_key = st.text_input("OpenAI API key:", value=api_key_default)
     assistant_identity = st.text_area(
         "Assistant identity:",
@@ -95,9 +99,14 @@ with st.sidebar.form(key="assistant_form"):
 #    - creates new memory object - any existing conversation about different repo is not relevant
 #    - if the model was loaded (LLMs already exist, API key works) - creates the final qa_chain in Assistant
 # 3) Informs about the un/success of loading repo (creating vector db)
-with st.sidebar.form(key="repo_url_form"):
+with sidebar_tab_settings.form(key="repo_url_form"):
     st.markdown("## Repository")
     repo_url = st.text_input("URL:", value=default_repo_url)
+    repo_local_path = st.text_input(
+        "Local folder:",
+        value=default_repo_local_path,
+        help="Absolute path to folder where the repository will be cloned and the vector database stored.",
+    )
 
     load_repository_clicked = st.form_submit_button(
         label="Load repository",
@@ -106,7 +115,7 @@ with st.sidebar.form(key="repo_url_form"):
     if load_repository_clicked or not st.session_state["default_repo_tried"]:
         if repo_url != st.session_state["assistant"].repo_url:
             with st.spinner("Loading repository..."):
-                message = st.session_state["assistant"].load_repo(repo_url)
+                message = st.session_state["assistant"].load_repo(repo_url, repo_local_path)
             if message == RepoRagChatAssistant.SUCCESS_MSG:
                 if st.session_state["default_repo_tried"]:
                     st.session_state.messages = [initial_message]

@@ -35,7 +35,6 @@ class RepoRagChatAssistant:
 
     SUCCESS_MSG = "SUCCESS"
     DB_FOLDER = "chroma_db"
-    REPO_FOLDER = "tmp"
 
     def __init__(self, streamlit_output_placeholder: DeltaGenerator):
         self.streamlit_output_placeholder = streamlit_output_placeholder
@@ -49,6 +48,7 @@ class RepoRagChatAssistant:
         self.repo_url = None
         self.output_callback = None
         self.last_formatted_message = None
+        self.repo_local_path = None
 
     @property
     def db_path(self):
@@ -58,8 +58,8 @@ class RepoRagChatAssistant:
     @property
     def repo_path(self):
         """Local path to the repository."""
-        assert self.repo_url is not None, "First set repo_url."
-        return os.path.join(RepoRagChatAssistant.REPO_FOLDER, self.repo_url.split("/")[-1])
+        assert self.repo_url and self.repo_local_path, "First set repo_url and repo_local_path."
+        return os.path.join(self.repo_local_path, self.repo_url.split("/")[-1])
 
     def __call__(self, prompt):
         result = self.qa_chain.invoke(prompt)
@@ -110,9 +110,10 @@ class RepoRagChatAssistant:
 
         return RepoRagChatAssistant.SUCCESS_MSG
 
-    def load_repo(self, repo_url: str) -> None:
+    def load_repo(self, repo_url: str, repo_local_path: str) -> None:
         """Load the repository and create the vectore DB."""
         self.repo_url = repo_url
+        self.repo_local_path = repo_local_path
 
         if os.path.exists(self.db_path) and "chroma.sqlite3" in os.listdir(self.db_path):
             # repository was already cloned and DB was persisted - load existing DB
@@ -137,6 +138,7 @@ class RepoRagChatAssistant:
                     repo_not_found_msg = "Repository not found"
                     if repo_not_found_msg in e.stderr:
                         self.repo_url = None
+                        self.repo_local_path = None
                         return f"{repo_not_found_msg} at URL: {repo_url}\nFix the URL and try again."
 
             self.db = self._create_db_from_repo(self.repo_path)

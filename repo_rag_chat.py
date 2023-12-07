@@ -361,9 +361,6 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
                 self._message_buffer + f"\n\n{StreamingOutCallbackHandler.SOURCES_MSG} {self._formatted_sources}"
             )
         self.streamlit_output_placeholder.markdown(self.final_message)
-        # self.output_streamlit_placeholder.markdown(
-        #     pd.DataFrame(self._sources).to_html(render_links=True), unsafe_allow_html=True
-        # )
 
         # reset internal variables for the next run
         self._message_buffer = ""
@@ -371,14 +368,6 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         self._sources = []
         self._sources_links = []
         self._parsing_message = True
-
-
-class MyStrOutputParser(StrOutputParser):
-    """OutputParser that parses LLMResult into the top likely string."""
-
-    def parse(self, result: dict) -> str:
-        """Returns the input text with no changes."""
-        return result["answer"]
 
 
 repo_combine_prompt_template = """{assistant_identity}\n
@@ -437,12 +426,6 @@ class RepoRetrievalQAWithSourcesChain(RetrievalQAWithSourcesChain):
     example. The combine LLM is also personalized with the assistant identity.
     """
 
-    # output_parser: BaseTransformOutputParser = MyStrOutputParser()
-
-    # def __init__(self, *args, **kwargs):
-    #     super().__init__(*args, **kwargs)
-    #     self.output_parser = StrOutputParser()
-
     @classmethod
     def from_llms(
         cls,
@@ -473,6 +456,3 @@ class RepoRetrievalQAWithSourcesChain(RetrievalQAWithSourcesChain):
             combine_documents_chain=combine_documents_chain,
             **kwargs,
         )
-
-    # def process(self, text: str) -> str:
-    #     return self.output_parser.parse(text)

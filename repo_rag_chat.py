@@ -13,7 +13,7 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
-from git import Repo
+from git import GitCommandError, Repo
 from langchain.chains import ReduceDocumentsChain, RetrievalQAWithSourcesChain
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
@@ -48,7 +48,7 @@ from streamlit.delta_generator import DeltaGenerator
 
 def get_links(url: str):
     """Get all unique links from a web page, excluding the anchors (#)."""
-    links = []
+    links = [url]
     try:
         response = requests.get(url)
         if response.status_code == 200:

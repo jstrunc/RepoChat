@@ -102,14 +102,9 @@ class RepoRagChatAssistant:
             temperature=temperature,
             max_tokens=max_tokens_per_generation,
         )
-        self.memory = ConversationSummaryMemory(
-            llm=self.partial_steps_llm,
-            memory_key="chat_history",
-            output_key="answer",
-            human_prefix="User",
-            ai_prefix="Assistant",
-            buffer=self.memory.buffer if self.memory else "",  # if reloading model, reuse the existing memory content
-        )
+        # only create new empty memory, if it doesn't exist, if reloading model, reuse the existing memory
+        if not self.memory:
+            self._create_memory()
 
         self.qa_chain = None  # loading new model invalidates the qa_chain
 
@@ -131,31 +126,22 @@ class RepoRagChatAssistant:
 
         if os.path.exists(self.db_path) and "chroma.sqlite3" in os.listdir(self.db_path):
             # repository was already cloned and DB was persisted - load existing DB
+            # TODO: check the DB is up to date (was created from the up to date repo, contains documentation if provided)
             self.db = Chroma(
                 embedding_function=self.embedding,
                 persist_directory=self.db_path,
                 collection_metadata={"hnsw:space": "cosine"},
             )
         else:
-            # clone/load repo and create new DB with embeddings
-            if (
-                os.path.exists(self.repo_path)
-                and (repo_content := os.listdir(self.repo_path))
-                and ".git" in repo_content
-            ):
-                repo = Repo(self.repo_path)
-                repo.remotes.origin.pull()
-            else:
-                try:
-                    repo = Repo.clone_from(repo_url, to_path=self.repo_path)
-                except GitCommandError as e:
-                    repo_not_found_msg = "Repository not found"
-                    if repo_not_found_msg in e.stderr:
-                        self.repo_url = None
-                        self.repo_local_path = None
-                        return f"{repo_not_found_msg} at URL: {repo_url}\nFix the URL and try again."
-
-            self.db = self._create_db_from_repo(self.repo_path)
+            # clone/update repo and create new DB with embeddings
+            result = self._clone_or_update_git_repo(repo_url, repo_local_path)
+            if result != RepoRagChatAssistant.SUCCESS_MSG:
+                self.repo_url = None
+                self.repo_local_path = None
+                return result
+            self.db = self._create_db(
+                self.repo_path,
+            )
 
         self.retriever = self.db.as_retriever(
             # "mmr" Maximum Marginal Relevance - optimizes for similarity to query and diversity among selected documents
@@ -169,24 +155,35 @@ class RepoRagChatAssistant:
 
         # if the model is already loaded, we can create new memory and qa_chain
         if self.combine_llm and self.partial_steps_llm:
-            self.memory = ConversationSummaryMemory(
-                llm=self.partial_steps_llm,
-                memory_key="chat_history",
-                output_key="answer",
-                human_prefix="User",
-                ai_prefix="Assistant",
-            )
+            self._create_memory()
             self._create_qa_chain()
 
         return RepoRagChatAssistant.SUCCESS_MSG
 
-    def _create_db_from_repo(self, repo_path: str, persist: bool = True) -> VectorStore:
+    def _clone_or_update_git_repo(self) -> str:
+        """Clones or updates the repository from self.repo_url to self.repo_path."""
+        repo = None
+
+        if os.path.exists(self.repo_path) and (repo_content := os.listdir(self.repo_path)) and ".git" in repo_content:
+            repo = Repo(self.repo_path)
+            repo.remotes.origin.pull()
+        else:
+            try:
+                repo = Repo.clone_from(self.repo_url, to_path=self.repo_path)
+            except GitCommandError as e:
+                repo_not_found_msg = "Repository not found"
+                if repo_not_found_msg in e.stderr:
+                    return f"{repo_not_found_msg} at URL: {self.repo_url}\nFix the URL and try again."
+        if repo:
+            return RepoRagChatAssistant.SUCCESS_MSG
+
+    def _create_db(self, repo_path: str, persist: bool = True) -> VectorStore:
         # Load all python files from repository path
         loader = GenericLoader.from_filesystem(
             repo_path,
             glob="**/*",
             suffixes=[".py"],
-            parser=LanguageParser(language=Language.PYTHON, parser_threshold=500),
+            parser=LanguageParser(language=Language.PYTHON),
         )
         python_splitter = RecursiveCharacterTextSplitter.from_language(
             Language.PYTHON, chunk_size=1000, chunk_overlap=200
@@ -200,7 +197,6 @@ class RepoRagChatAssistant:
             persist_directory=self.db_path,
             collection_metadata={"hnsw:space": "cosine"},
         )
-
         if persist:
             db.persist()
 
@@ -217,6 +213,15 @@ class RepoRagChatAssistant:
             retriever=self.retriever,
             memory=self.memory,
             return_source_documents=True,
+        )
+
+    def _create_memory(self) -> None:
+        self.memory = ConversationSummaryMemory(
+            llm=self.partial_steps_llm,
+            memory_key="chat_history",
+            output_key="answer",
+            human_prefix="User",
+            ai_prefix="Assistant",
         )
 
 

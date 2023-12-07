@@ -6,9 +6,20 @@ import streamlit as st
 
 from repo_rag_chat import RepoRagChatAssistant
 
-# TODO: Add controls for specifying the number of retrieved documents, token limit, ...
-# TODO: Add the ability to perform Google/DuckDuckGo searches
-# TODO: Add input format validation
+# TODO: Input fields for the number of retrieved documents, token limit, ...
+# TODO: Google/DuckDuckGo searches
+
+
+def url_valid(url: str) -> bool:
+    """Validates the URL by checking if it returns 200 status code."""
+    url_ok = False
+    try:
+        if url and requests.get(url).status_code == 200:
+            url_ok = True
+    except Exception as e:
+        url_ok = False
+    return url_ok
+
 
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
@@ -98,18 +109,6 @@ with sidebar_tab_settings.form(key="assistant_form"):
         st.success(f"Model **{st.session_state['assistant'].model}** loaded.")
 
     st.session_state["default_model_tried"] = True
-
-
-def url_valid(url: str) -> bool:
-    """Validates the URL by checking if it returns 200 status code."""
-    url_ok = False
-    try:
-        if url and requests.get(url).status_code == 200:
-            url_ok = True
-    except Exception as e:
-        url_ok = False
-
-    return url_ok
 
 
 # Loading new repository:

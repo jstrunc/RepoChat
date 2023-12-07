@@ -64,7 +64,7 @@ def get_links(url: str):
 
 
 class RepoRagChatAssistant:
-    """Assistant for retrieval augmented generation powered chat with sources from a repository."""
+    """Assistant for retrieval augmented generation powered chat with sources from a repository and web documentation."""
 
     SUCCESS_MSG = "SUCCESS"
     DB_FOLDER = "chroma_db"
@@ -86,18 +86,19 @@ class RepoRagChatAssistant:
         self.repo_local_path = None
 
     @property
-    def db_path(self):
+    def db_path(self) -> str:
         """Local path to the vector database."""
         return os.path.join(self.repo_path, RepoRagChatAssistant.DB_FOLDER)
 
     @property
-    def repo_path(self):
+    def repo_path(self) -> str:
         """Local path to the repository."""
         assert self.repo_url and self.repo_local_path, "First set repo_url and repo_local_path."
         return os.path.join(self.repo_local_path, self.repo_url.split("/")[-1])
 
-    def __call__(self, prompt):
-        result = self.qa_chain.invoke(prompt)
+    def __call__(self, prompt: str) -> dict[str, Any]:
+        assert self.qa_chain, "First load the model and the repository."
+        result = self.qa_chain(prompt)
         self.last_formatted_message = self.output_callback.final_message
         return result
 
@@ -108,7 +109,7 @@ class RepoRagChatAssistant:
         assistant_identity: str,
         temperature: float = 0.1,
         max_tokens_per_generation: int = 500,
-    ):
+    ) -> str:
         """Create assistant's LLMs and memory."""
         self.model = model
         self.assistant_identity = assistant_identity
@@ -141,7 +142,7 @@ class RepoRagChatAssistant:
 
         return RepoRagChatAssistant.SUCCESS_MSG
 
-    def load_repo(self, repo_url: str, repo_local_path: str, documentation_url: Optional[str] = None) -> None:
+    def load_repo(self, repo_url: str, repo_local_path: str, documentation_url: Optional[str] = None) -> str:
         """Load the repository and create the vectore DB."""
         if not self.embedding:
             return "Embeddings not initialized. First load the model."
@@ -197,6 +198,8 @@ class RepoRagChatAssistant:
                     return f"{repo_not_found_msg} at URL: {self.repo_url}\nFix the URL and try again."
         if repo:
             return RepoRagChatAssistant.SUCCESS_MSG
+        else:
+            return "Unknown error while cloning the repository."
 
     def _create_db(self, persist: bool = True) -> VectorStore:
         chunks = []
@@ -208,13 +211,12 @@ class RepoRagChatAssistant:
         if persist:
             total_steps += 1
 
-        # Load and split to chunks various sources:
+        # Load documents from various sources and split to chunks:
         # 1. Local Python files
         msg = (
             "##### Initial creation of the vector database - might take couple of minutes:"
             f"\n\n- {current_step}/{total_steps} Loading and chunking .py files..."
         )
-        # self.streamlit_output_placeholder.markdown(msg)
         self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
         python_loader = GenericLoader.from_filesystem(
             self.repo_path,
@@ -228,11 +230,8 @@ class RepoRagChatAssistant:
         # 2. Local Readme files
         current_step += 1
         msg += f"\n\n- {current_step}/{total_steps} Loading and chunking .md files..."
-        # self.streamlit_output_placeholder.markdown(msg)
         self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
         # GenericLoader doesn't work for .md files, lets do it manualy with the use of UnstructuredMarkdownLoader
-        # md_loader = GenericLoader.from_filesystem(self.repo_path, glob="**/*", suffixes=[".md"],
-        #     parser=LanguageParser(language=Language.MARKDOWN))  # no LANGUAGE_SEGMENTERS for MARKDOWN
         md_files = glob.glob(f"{self.repo_path}/**/*.md", recursive=True)  # get all .md files in the repo
         md_documents = [UnstructuredMarkdownLoader(md_file).load()[0] for md_file in md_files]
         md_splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=200)
@@ -243,18 +242,16 @@ class RepoRagChatAssistant:
             current_step += 1
             msg += f"\n\n- {current_step}/{total_steps} Loading and chunking online documentation..."
             self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
-            # self.streamlit_output_placeholder.markdown(msg)
             links = get_links(self.documentation_url)
             web_loader = WebBaseLoader(web_paths=links)
             chunks.extend(
                 python_splitter.split_documents(web_loader.load())
-            )  # doc has python code, use python splitter
+            )  # doc has python code, use also python splitter
 
         # create new DB with embeddings
         current_step += 1
         msg += f"\n\n- {current_step}/{total_steps} Creating the vector database..."
         self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
-        # self.streamlit_output_placeholder.markdown(msg)
         db = Chroma.from_documents(
             chunks,
             self.embedding,

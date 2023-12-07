@@ -1,4 +1,5 @@
 import os
+import re
 
 import streamlit as st
 
@@ -46,16 +47,16 @@ sidebar_tab_settings, sidebar_tab_about = st.sidebar.tabs(["Settings", "About"])
 
 with sidebar_tab_about:
     st.markdown(
-        "### RepoChat is a conversational AI assistant that can answer questions about code repositories."
-        "\n\n ## Features: \n"
+        "### RepoChat is a conversational AI assistant that can answer questions about code repositories.\n\n "
+        "## Features: \n"
         "- **Conversational** - you can ask multiple questions in one conversation\n"
         "- **Context-aware** - the assistant remembers the conversation history and can use it to answer questions\n"
         "- **Retrieval augmented generation** - the assistant uses a vector store to find relevant information\n"
         "- **Jump to information source** - The files identified as sources of information relevant to the question"
         " are provided together with the answers in the form of clickable links\n"
         "- **Open-domain** - the assistant can answer questions about any code repository\n"
-        "- **Open-ended** - the assistant can answer questions that are not explicitly mentioned in the repository\n"
-        "\n\n ## Author: \n[Josef Strunc](mailto:josef.strunc@gmail.com)"
+        "- **Open-ended** - the assistant can answer questions that are not explicitly mentioned in the repository\n\n"
+        "## Author: \n[Josef Strunc](mailto:josef.strunc@gmail.com)"
     )
 
 # Loading new model:
@@ -154,12 +155,12 @@ if st.session_state["assistant"].qa_chain:
                 )
 
                 with st.expander("Full result (sources and similarity scores)"):
-                    st.markdown(f"### Sources used for generating the final answer: \n")
+                    st.markdown(f"### Documents used for generating the final answer: \n")
                     # st.markdown("- ".join([doc for doc in list(message['full_result']['sources'])]))
                     st.markdown(message['full_result']['sources'])
                     st.markdown(
-                        "### All documents retrieved from the vector DB with contents and similarity scores."
-                        "\n(Sorted, the most similar on the top. Lower score represents more similarity.)"
+                        "### All document chunks retrieved from the vector DB with contents and similarity scores.\n"
+                        "(Sorted, the most similar on the top. Lower score represents more similarity.)"
                     )
                     for i, doc in enumerate(message["full_result"]["source_documents"]):
                         # double check that db.similarity_search_with_score returned the same docs in the same order
@@ -167,7 +168,10 @@ if st.session_state["assistant"].qa_chain:
                         st.markdown(
                             f"##### {i+1}. Score: {docs_with_similarity[i][1]:.4f}: \n**{doc.metadata['source']}**"
                         )
-                        st.code(doc.page_content)
+                        page_content_compacted = re.sub(r'\n+', '\n', doc.page_content)  # remove duplicated newlines
+
+                        # TODO: better print of the documentation chunks - they are not all code
+                        st.code(page_content_compacted)
 
     if prompt := st.chat_input(f"Ask a question about {st.session_state['assistant'].repo_url}", key="chat_input"):
         # hacky way to disable the chat input while the assistant is working

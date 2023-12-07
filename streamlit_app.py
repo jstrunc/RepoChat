@@ -21,23 +21,25 @@ default_assistant_identity = (
     " about any code repository."
 )
 
-st.set_page_config(page_title="RepoChat", layout="wide")
-st.title("RepoChat")
-
-if "message_placeholder" not in st.session_state:
-    st.session_state["message_placeholder"] = st.empty()
-
 if "messages" not in st.session_state:
-    st.session_state.messages = [initial_message]
-
-if "assistant" not in st.session_state:
-    st.session_state["assistant"] = RepoRagChatAssistant(st.session_state["message_placeholder"])
+    st.session_state["messages"] = [initial_message]
 
 if "default_model_tried" not in st.session_state:
     st.session_state["default_model_tried"] = False
 
 if "default_repo_tried" not in st.session_state:
     st.session_state["default_repo_tried"] = False
+
+
+# Start building UI
+st.set_page_config(page_title="RepoChat", layout="wide")
+st.title("RepoChat")
+
+if "message_placeholder" not in st.session_state:
+    st.session_state["message_placeholder"] = st.empty()
+
+if "assistant" not in st.session_state:
+    st.session_state["assistant"] = RepoRagChatAssistant(st.session_state["message_placeholder"])
 
 sidebar_tab_settings, sidebar_tab_about = st.sidebar.tabs(["Settings", "About"])
 
@@ -117,19 +119,16 @@ with sidebar_tab_settings.form(key="repo_url_form"):
         help="Loads the repository on the given URL.\n\nAny existing conversation is deleted ",
     )
     if load_repository_clicked or not st.session_state["default_repo_tried"]:
-        if repo_url != st.session_state["assistant"].repo_url:
-            with st.spinner("Loading repository..."):
-                message = st.session_state["assistant"].load_repo(repo_url, repo_local_path)
-            if message == RepoRagChatAssistant.SUCCESS_MSG:
-                if st.session_state["default_repo_tried"]:
-                    st.session_state.messages = [initial_message]
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"I loaded the repository **{repo_url}**."}
-                )
-            else:
-                st.error(message)
+        with st.spinner("Loading repository..."):
+            message = st.session_state["assistant"].load_repo(repo_url, repo_local_path)
+        if message == RepoRagChatAssistant.SUCCESS_MSG:
+            if st.session_state["default_repo_tried"]:
+                st.session_state.messages = [initial_message]
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"I loaded the repository **{repo_url}**."}
+            )
         else:
-            st.markdown("This repository is already loaded.")
+            st.markdown(message)
 
     if st.session_state["assistant"].repo_url:
         st.success(f"Repository **{st.session_state['assistant'].repo_url}** loaded.")
@@ -147,7 +146,7 @@ if st.session_state["assistant"].qa_chain:
                     message["full_result"]["question"]
                 )
 
-                with st.expander("Full result"):
+                with st.expander("Full result (sources and similarity scores)"):
                     st.markdown(f"### Sources used for generating the final answer: \n")
                     # st.markdown("- ".join([doc for doc in list(message['full_result']['sources'])]))
                     st.markdown(message['full_result']['sources'])

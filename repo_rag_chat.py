@@ -51,8 +51,10 @@ class RepoRagChatAssistant:
         self.memory = None
         self.partial_steps_llm = None
         self.combine_llm = None
+        self.qa_chain = None
         self.repo_url = None
         self.output_callback = None
+        self.embedding = None
         self.last_formatted_message = None
         self.repo_local_path = None
 
@@ -84,6 +86,7 @@ class RepoRagChatAssistant:
         self.model = model
         self.assistant_identity = assistant_identity
         self.output_callback = StreamingOutCallbackHandler(self.streamlit_output_placeholder)
+        self.embedding = OpenAIEmbeddings(openai_api_key=openai_api_key, disallowed_special=())
 
         self.combine_llm = ChatOpenAI(
             openai_api_key=openai_api_key,
@@ -118,13 +121,18 @@ class RepoRagChatAssistant:
 
     def load_repo(self, repo_url: str, repo_local_path: str) -> None:
         """Load the repository and create the vectore DB."""
+        if not self.embedding:
+            return "Embeddings not initialized. First load the model."
+        elif repo_url == self.repo_url:
+            return "This repository is already loaded."
+
         self.repo_url = repo_url
         self.repo_local_path = repo_local_path
 
         if os.path.exists(self.db_path) and "chroma.sqlite3" in os.listdir(self.db_path):
             # repository was already cloned and DB was persisted - load existing DB
             self.db = Chroma(
-                embedding_function=OpenAIEmbeddings(disallowed_special=()),
+                embedding_function=self.embedding,
                 persist_directory=self.db_path,
                 collection_metadata={"hnsw:space": "cosine"},
             )
@@ -188,7 +196,7 @@ class RepoRagChatAssistant:
         # create new DB with embeddings
         db = Chroma.from_documents(
             texts,
-            OpenAIEmbeddings(disallowed_special=()),
+            self.embedding,
             persist_directory=self.db_path,
             collection_metadata={"hnsw:space": "cosine"},
         )
@@ -216,7 +224,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
     """Callback handler for streaming. Only works with LLMs that support streaming."""
 
     SOURCES_IDENTIFIER = "\nSOURCES:"
-    SOURCES_MSG = "Checked documents:"
+    SOURCES_MSG = "Source documents:"
 
     def __init__(self, streamlit_output_placeholder: DeltaGenerator):
         self.streamlit_output_placeholder = streamlit_output_placeholder

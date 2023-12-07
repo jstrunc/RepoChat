@@ -11,6 +11,7 @@ from repo_rag_chat import RepoRagChatAssistant
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
+default_documentation_url = "https://ibm.github.io/ibm-generative-ai/index.html"
 default_repo_local_path = "/tmp/repo_chat"
 initial_message = {
     "role": "assistant",
@@ -113,20 +114,26 @@ with sidebar_tab_settings.form(key="repo_url_form"):
         value=default_repo_local_path,
         help="Absolute path to folder where the repository will be cloned and the vector database stored.",
     )
-
+    documentation_url = st.text_input(
+        "Documentation URL (optional):",
+        value=default_documentation_url,
+        help="Optional link to the documentation of the repository.\n\n"
+        "All links from this URL will be parsed and added to the vector DB",
+    )
     load_repository_clicked = st.form_submit_button(
         label="Load repository",
         help="Loads the repository on the given URL.\n\nAny existing conversation is deleted ",
     )
     if load_repository_clicked or not st.session_state["default_repo_tried"]:
         with st.spinner("Loading repository..."):
-            message = st.session_state["assistant"].load_repo(repo_url, repo_local_path)
+            message = st.session_state["assistant"].load_repo(repo_url, repo_local_path, documentation_url)
         if message == RepoRagChatAssistant.SUCCESS_MSG:
             if st.session_state["default_repo_tried"]:
                 st.session_state.messages = [initial_message]
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"I loaded the repository **{repo_url}**."}
-            )
+            assistant_msg = f"I loaded the repository from {repo_url}"
+            if documentation_url:
+                assistant_msg += f" and the documentation from {documentation_url}"
+            st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
         else:
             st.markdown(message)
 

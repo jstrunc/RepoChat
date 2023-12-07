@@ -6,9 +6,13 @@ import sys
 
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
+import glob
 import os
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import urljoin
 
+import requests
+from bs4 import BeautifulSoup
 from git import Repo
 from langchain.chains import ReduceDocumentsChain, RetrievalQAWithSourcesChain
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
@@ -20,7 +24,9 @@ from langchain.chains.qa_with_sources.map_reduce_prompt import (
     QUESTION_PROMPT,
 )
 from langchain.chat_models import ChatOpenAI
+from langchain.document_loaders import WebBaseLoader
 from langchain.document_loaders.generic import GenericLoader
+from langchain.document_loaders.markdown import UnstructuredMarkdownLoader
 from langchain.document_loaders.parsers import LanguageParser
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.memory import ConversationSummaryMemory
@@ -29,11 +35,32 @@ from langchain.schema.callbacks.streaming_stdout import StreamingStdOutCallbackH
 from langchain.schema.language_model import BaseLanguageModel
 from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.vectorstore import VectorStore
-from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
+from langchain.text_splitter import (
+    Language,
+    MarkdownTextSplitter,
+    PythonCodeTextSplitter,
+)
 from langchain.vectorstores import Chroma
 from langchain_core.outputs import LLMResult
 from langchain_core.prompts import PromptTemplate
 from streamlit.delta_generator import DeltaGenerator
+
+
+def get_links(url: str):
+    """Get all unique links from a web page, excluding the anchors (#)."""
+    links = []
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for i, link in enumerate(soup.find_all('a', href=True)):
+                absolute_url = urljoin(url, link['href'])
+                if "#" not in absolute_url and absolute_url not in links:
+                    links.append(absolute_url)
+    except Exception as e:
+        print(f"Error parsing {url}: {e}")
+
+    return links
 
 
 class RepoRagChatAssistant:
@@ -114,7 +141,7 @@ class RepoRagChatAssistant:
 
         return RepoRagChatAssistant.SUCCESS_MSG
 
-    def load_repo(self, repo_url: str, repo_local_path: str) -> None:
+    def load_repo(self, repo_url: str, repo_local_path: str, documentation_url: Optional[str] = None) -> None:
         """Load the repository and create the vectore DB."""
         if not self.embedding:
             return "Embeddings not initialized. First load the model."
@@ -123,6 +150,7 @@ class RepoRagChatAssistant:
 
         self.repo_url = repo_url
         self.repo_local_path = repo_local_path
+        self.documentation_url = documentation_url
 
         if os.path.exists(self.db_path) and "chroma.sqlite3" in os.listdir(self.db_path):
             # repository was already cloned and DB was persisted - load existing DB
@@ -138,7 +166,7 @@ class RepoRagChatAssistant:
             if result != RepoRagChatAssistant.SUCCESS_MSG:
                 self.repo_url, self.repo_local_path = None, None
                 return result
-            self.db = self._create_db(self.repo_path)
+            self.db = self._create_db()
 
         # search_type="mmr" Max. Marginal Relevance - optimizes for similarity to query and diversity among documents
         self.retriever = self.db.as_retriever(search_type="similarity", search_kwargs={"k": 4})
@@ -170,29 +198,62 @@ class RepoRagChatAssistant:
         if repo:
             return RepoRagChatAssistant.SUCCESS_MSG
 
-    def _create_db(self, repo_path: str, persist: bool = True) -> VectorStore:
-        # Load all python files from repository path
-        loader = GenericLoader.from_filesystem(
-            repo_path,
+    def _create_db(self, persist: bool = True) -> VectorStore:
+        chunks = []
+
+        # Load and split to chunks various sources:
+        # 1. Local Python files
+        msg = (
+            "##### Initial creation of the vector database - might take couple of minutes:"
+            "\n\n- 1/4 Loading and chunking Python files..."
+        )
+        # self.streamlit_output_placeholder.markdown(msg)
+        self.streamlit_output_placeholder.progress(0, text=msg)
+        python_loader = GenericLoader.from_filesystem(
+            self.repo_path,
             glob="**/*",
             suffixes=[".py"],
             parser=LanguageParser(language=Language.PYTHON),
         )
-        python_splitter = RecursiveCharacterTextSplitter.from_language(
-            Language.PYTHON, chunk_size=1000, chunk_overlap=200
-        )
-        texts = python_splitter.split_documents(loader.load())
+        python_splitter = PythonCodeTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks.extend(python_splitter.split_documents(python_loader.load()))
+
+        # 2. Local Readme files
+        msg += "\n\n- 2/4 Loading and chunking .md files..."
+        # self.streamlit_output_placeholder.markdown(msg)
+        self.streamlit_output_placeholder.progress(1 / 4, text=msg)
+        # GenericLoader doesn't work for .md files, lets do it manualy with the use of UnstructuredMarkdownLoader
+        # md_loader = GenericLoader.from_filesystem(self.repo_path, glob="**/*", suffixes=[".md"],
+        #     parser=LanguageParser(language=Language.MARKDOWN))  # no LANGUAGE_SEGMENTERS for MARKDOWN
+        md_files = glob.glob(f"{self.repo_path}/**/*.md", recursive=True)  # get all .md files in the repo
+        md_documents = [UnstructuredMarkdownLoader(md_file).load()[0] for md_file in md_files]
+        md_splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=200)
+        chunks.extend(md_splitter.split_documents(md_documents))
+
+        # 3. Online HTML documentation
+        msg += "\n\n- 3/4 Loading and chunking online documentation..."
+        self.streamlit_output_placeholder.progress(2 / 4, text=msg)
+        # self.streamlit_output_placeholder.markdown(msg)
+        links = get_links(self.documentation_url)
+        web_loader = WebBaseLoader(web_paths=links)
+        chunks.extend(python_splitter.split_documents(web_loader.load()))  # doc has python code, use python splitter
 
         # create new DB with embeddings
+        msg += "\n\n- 4/4 Creating the vector database..."
+        self.streamlit_output_placeholder.progress(3 / 4, text=msg)
+        # self.streamlit_output_placeholder.markdown(msg)
         db = Chroma.from_documents(
-            texts,
+            chunks,
             self.embedding,
             persist_directory=self.db_path,
             collection_metadata={"hnsw:space": "cosine"},
         )
         if persist:
+            msg += "\n\n- Storing the vector database..."
+            self.streamlit_output_placeholder.progress(1, text=msg)
             db.persist()
 
+        self.streamlit_output_placeholder.markdown("")  # clear the output
         return db
 
     def _create_qa_chain(self) -> None:

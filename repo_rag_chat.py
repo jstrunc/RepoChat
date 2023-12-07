@@ -269,6 +269,9 @@ class RepoRagChatAssistant:
         return db
 
     def _create_qa_chain(self) -> None:
+        # initialize the output_callback with the current repo info
+        repo = Repo(self.repo_path)
+        self.output_callback.repo_branch = repo.active_branch.name  # used to create source links for the output
         self.output_callback.repo_url = self.repo_url
         self.output_callback.repo_path = self.repo_path
 
@@ -301,6 +304,7 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         self.streamlit_output_placeholder = streamlit_output_placeholder
         self.repo_url = None
         self.repo_path = None
+        self.repo_branch = None
         self.final_message = ""
         self._message_buffer = ""
         self._source_buffer = ""
@@ -327,8 +331,10 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
                 self._parsing_message = False
         else:  # parsing sources
             if token == ",":  # append complete source url - change local repo path to url
-                # TODO: fix the "/tree/main": this will probably only work on Github
-                self._sources.append(self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/tree/main"))
+                # TODO: fix the "/blob/": this will probably only work on Github
+                self._sources.append(
+                    self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/blob/{self.repo_branch}")
+                )
                 self._source_buffer = ""
             else:  # continue parsing single source
                 self._source_buffer += token
@@ -346,7 +352,9 @@ class StreamingOutCallbackHandler(StreamingStdOutCallbackHandler):
         """Run when LLM ends running."""
         # source still in buffer:
         if self._source_buffer:
-            self._sources.append(self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/tree/main"))
+            self._sources.append(
+                self._source_buffer.lstrip().replace(self.repo_path, f"{self.repo_url}/blob/{self.repo_branch}")
+            )
 
         if self._sources:
             self.final_message = (

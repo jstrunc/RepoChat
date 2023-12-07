@@ -201,14 +201,21 @@ class RepoRagChatAssistant:
     def _create_db(self, persist: bool = True) -> VectorStore:
         chunks = []
 
+        current_step = 1
+        total_steps = 2
+        if self.documentation_url:
+            total_steps += 1
+        if persist:
+            total_steps += 1
+
         # Load and split to chunks various sources:
         # 1. Local Python files
         msg = (
             "##### Initial creation of the vector database - might take couple of minutes:"
-            "\n\n- 1/4 Loading and chunking Python files..."
+            f"\n\n- {current_step}/{total_steps} Loading and chunking .py files..."
         )
         # self.streamlit_output_placeholder.markdown(msg)
-        self.streamlit_output_placeholder.progress(0, text=msg)
+        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
         python_loader = GenericLoader.from_filesystem(
             self.repo_path,
             glob="**/*",
@@ -219,9 +226,10 @@ class RepoRagChatAssistant:
         chunks.extend(python_splitter.split_documents(python_loader.load()))
 
         # 2. Local Readme files
-        msg += "\n\n- 2/4 Loading and chunking .md files..."
+        current_step += 1
+        msg += f"\n\n- {current_step}/{total_steps} Loading and chunking .md files..."
         # self.streamlit_output_placeholder.markdown(msg)
-        self.streamlit_output_placeholder.progress(1 / 4, text=msg)
+        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
         # GenericLoader doesn't work for .md files, lets do it manualy with the use of UnstructuredMarkdownLoader
         # md_loader = GenericLoader.from_filesystem(self.repo_path, glob="**/*", suffixes=[".md"],
         #     parser=LanguageParser(language=Language.MARKDOWN))  # no LANGUAGE_SEGMENTERS for MARKDOWN
@@ -231,16 +239,21 @@ class RepoRagChatAssistant:
         chunks.extend(md_splitter.split_documents(md_documents))
 
         # 3. Online HTML documentation
-        msg += "\n\n- 3/4 Loading and chunking online documentation..."
-        self.streamlit_output_placeholder.progress(2 / 4, text=msg)
-        # self.streamlit_output_placeholder.markdown(msg)
-        links = get_links(self.documentation_url)
-        web_loader = WebBaseLoader(web_paths=links)
-        chunks.extend(python_splitter.split_documents(web_loader.load()))  # doc has python code, use python splitter
+        if self.documentation_url:
+            current_step += 1
+            msg += f"\n\n- {current_step}/{total_steps} Loading and chunking online documentation..."
+            self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
+            # self.streamlit_output_placeholder.markdown(msg)
+            links = get_links(self.documentation_url)
+            web_loader = WebBaseLoader(web_paths=links)
+            chunks.extend(
+                python_splitter.split_documents(web_loader.load())
+            )  # doc has python code, use python splitter
 
         # create new DB with embeddings
-        msg += "\n\n- 4/4 Creating the vector database..."
-        self.streamlit_output_placeholder.progress(3 / 4, text=msg)
+        current_step += 1
+        msg += f"\n\n- {current_step}/{total_steps} Creating the vector database..."
+        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
         # self.streamlit_output_placeholder.markdown(msg)
         db = Chroma.from_documents(
             chunks,
@@ -249,8 +262,7 @@ class RepoRagChatAssistant:
             collection_metadata={"hnsw:space": "cosine"},
         )
         if persist:
-            msg += "\n\n- Storing the vector database..."
-            self.streamlit_output_placeholder.progress(1, text=msg)
+            self.streamlit_output_placeholder.markdown(msg)
             db.persist()
 
         self.streamlit_output_placeholder.markdown("")  # clear the output

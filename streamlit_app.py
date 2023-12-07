@@ -56,6 +56,7 @@ with sidebar_tab_about:
         " are provided together with the answers in the form of clickable links\n"
         "- **Open-domain** - the assistant can answer questions about any code repository\n"
         "- **Open-ended** - the assistant can answer questions that are not explicitly mentioned in the repository\n\n"
+        "Limitations:\n - Currently only supports .py and .md files\n\n"
         "## Author: \n[Josef Strunc](mailto:josef.strunc@gmail.com)"
     )
 

@@ -1,6 +1,7 @@
 import os
 import re
 
+import requests
 import streamlit as st
 
 from repo_rag_chat import RepoRagChatAssistant
@@ -99,6 +100,18 @@ with sidebar_tab_settings.form(key="assistant_form"):
     st.session_state["default_model_tried"] = True
 
 
+def url_valid(url: str) -> bool:
+    """Validates the URL by checking if it returns 200 status code."""
+    url_ok = False
+    try:
+        if url and requests.get(url).status_code == 200:
+            url_ok = True
+    except Exception as e:
+        url_ok = False
+
+    return url_ok
+
+
 # Loading new repository:
 # 1) Read inputs from the UI
 # 2) If the repo url is different than the one currently loaded in the Assistant:
@@ -126,7 +139,17 @@ with sidebar_tab_settings.form(key="repo_url_form"):
         label="Load repository",
         help="Loads the repository on the given URL.\n\nAny existing conversation is deleted ",
     )
-    if load_repository_clicked or not st.session_state["default_repo_tried"]:
+
+    both_urls_valid = True
+    if load_repository_clicked:
+        if not url_valid(repo_url):
+            st.error("Invalid or unreachable repository URL")
+            both_urls_valid = False
+        if documentation_url and not url_valid(documentation_url):
+            st.error("Invalid documentation URL")
+            both_urls_valid = False
+
+    if (load_repository_clicked or not st.session_state["default_repo_tried"]) and both_urls_valid:
         with st.spinner("Loading repository..."):
             message = st.session_state["assistant"].load_repo(repo_url, repo_local_path, documentation_url)
         if message == RepoRagChatAssistant.SUCCESS_MSG:
@@ -139,7 +162,7 @@ with sidebar_tab_settings.form(key="repo_url_form"):
         else:
             st.markdown(message)
 
-    if st.session_state["assistant"].repo_url:
+    if both_urls_valid and st.session_state["assistant"].repo_url:
         st.success(f"Repository **{st.session_state['assistant'].repo_url}** loaded.")
 
     st.session_state["default_repo_tried"] = True

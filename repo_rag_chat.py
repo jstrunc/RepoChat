@@ -134,24 +134,17 @@ class RepoRagChatAssistant:
             )
         else:
             # clone/update repo and create new DB with embeddings
-            result = self._clone_or_update_git_repo(repo_url, repo_local_path)
+            result = self._clone_or_update_git_repo()
             if result != RepoRagChatAssistant.SUCCESS_MSG:
-                self.repo_url = None
-                self.repo_local_path = None
+                self.repo_url, self.repo_local_path = None, None
                 return result
-            self.db = self._create_db(
-                self.repo_path,
-            )
+            self.db = self._create_db(self.repo_path)
 
-        self.retriever = self.db.as_retriever(
-            # "mmr" Maximum Marginal Relevance - optimizes for similarity to query and diversity among selected documents
-            search_type="similarity",  # or "mmr"
-            search_kwargs={"k": 4},
-        )
+        # search_type="mmr" Max. Marginal Relevance - optimizes for similarity to query and diversity among documents
+        self.retriever = self.db.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
         # loading new repo/DB invalidates the qa_chain and memory
-        self.qa_chain = None
-        self.memory = None
+        self.qa_chain, self.memory = None, None
 
         # if the model is already loaded, we can create new memory and qa_chain
         if self.combine_llm and self.partial_steps_llm:

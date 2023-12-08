@@ -110,7 +110,15 @@ class RepoRagChatAssistant:
         temperature: float = 0.1,
         max_tokens_per_generation: int = 500,
     ) -> str:
-        """Create assistant's LLMs and memory."""
+        """Create assistant's LLMs, memory and if possible combine to the whole chain.
+
+        This method can be called in 2 different cases:
+        - 1) model (LLMs+memory) doesn't exist:
+            -> create new LLMs & memory
+        - 2) model (LLMs+memory) exists:
+            -> create new LLMs, keep the same memory - don't erase previous conversation
+        In any case when retriever already exists - create the chain (assistant will be ready to use through __call__)
+        """
         self.model = model
         self.assistant_identity = assistant_identity
         self.output_callback = StreamingOutCallbackHandler(self.streamlit_output_placeholder)
@@ -130,9 +138,8 @@ class RepoRagChatAssistant:
             temperature=temperature,
             max_tokens=max_tokens_per_generation,
         )
-        # only create new empty memory, if it doesn't exist, if reloading model, reuse the existing memory
-        if not self.memory:
-            self._create_memory()
+        # creates memory with the new partial_steps_llm, on reload;, if memory already exists, keep the internal buffer
+        self._create_memory(keep_buffer=True)
 
         self.qa_chain = None  # loading new model invalidates the qa_chain
 
@@ -143,7 +150,19 @@ class RepoRagChatAssistant:
         return RepoRagChatAssistant.SUCCESS_MSG
 
     def load_repo(self, repo_url: str, repo_local_path: str, documentation_url: Optional[str] = None) -> str:
-        """Load the repository and create the vectore DB."""
+        """Load the repository and documentation and create the vector DB.
+
+        Executes one of the following (both require OpenAI embeddings - for this the model has to be loaded):
+        1a) If there is existing Chroma DB at the correct location - just load that
+        1b) Create Chroma DB with new document chunks from scratch
+            1) CLone or (pull existing) repo
+            2) Parse and chunk the documents from the local repo and from the online documentation
+            3) Add the chunks to the DB
+            4) Persist the DB
+        2) Creates retriever
+        3) if the LLMs exist creates the whole chain (assistant will be ready to use through __call__), if memory
+           existed it is erased
+        """
         if not self.embedding:
             return "Embeddings not initialized. First load the model."
         elif repo_url == self.repo_url:
@@ -281,13 +300,14 @@ class RepoRagChatAssistant:
             return_source_documents=True,
         )
 
-    def _create_memory(self) -> None:
+    def _create_memory(self, keep_buffer: bool = False) -> None:
         self.memory = ConversationSummaryMemory(
             llm=self.partial_steps_llm,
             memory_key="chat_history",
             output_key="answer",
             human_prefix="User",
             ai_prefix="Assistant",
+            buffer=self.memory.buffer if (self.memory and keep_buffer) else "",  # reuse the existing memory content
         )
 
 

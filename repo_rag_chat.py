@@ -9,7 +9,7 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 import glob
 import os
 from typing import Any, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -47,7 +47,8 @@ from streamlit.delta_generator import DeltaGenerator
 
 
 def get_links(url: str):
-    """Get all unique links from a web page, excluding the anchors (#)."""
+    """Get all unique links from a web page, excluding the anchors (#) and other websites (sith different netloc)."""
+    website_netloc = urlsplit(url).netloc
     links = [url]
     try:
         response = requests.get(url)
@@ -55,7 +56,8 @@ def get_links(url: str):
             soup = BeautifulSoup(response.text, 'html.parser')
             for i, link in enumerate(soup.find_all('a', href=True)):
                 absolute_url = urljoin(url, link['href'])
-                if "#" not in absolute_url and absolute_url not in links:
+                # filter out links to other websites, anchors and duplicates
+                if website_netloc in absolute_url and "#" not in absolute_url and absolute_url not in links:
                     links.append(absolute_url)
     except Exception as e:
         print(f"Error parsing {url}: {e}")

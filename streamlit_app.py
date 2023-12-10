@@ -1,5 +1,6 @@
 import os
 import re
+from urllib.parse import urlparse
 
 import requests
 import streamlit as st
@@ -11,14 +12,15 @@ from repo_rag_chat import RepoRagChatAssistant
 
 
 def url_valid(url: str) -> bool:
-    """Validates the URL by checking if it returns 200 status code."""
-    url_ok = False
+    """Validates the URL by checking if it has a correct format and if it is reachable returning 200 status code."""
     try:
-        if url and requests.get(url).status_code == 200:
-            url_ok = True
+        if url:
+            parsed_url = urlparse(url)
+            return parsed_url.scheme and parsed_url.netloc and requests.get(url).status_code == 200
     except Exception as e:
-        url_ok = False
-    return url_ok
+        print(f"Error validating URL {url}: {e}", file=sys.stderr)
+    return False
+
 
 
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")

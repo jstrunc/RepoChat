@@ -26,21 +26,18 @@ from langchain.chains.qa_with_sources.map_reduce_prompt import (
     QUESTION_PROMPT,
 )
 from langchain.chat_models import ChatOpenAI
-from langchain.document_loaders import WebBaseLoader
-from langchain.document_loaders.generic import GenericLoader
+from langchain.document_loaders import TextLoader, WebBaseLoader
 from langchain.document_loaders.markdown import UnstructuredMarkdownLoader
-from langchain.document_loaders.parsers import LanguageParser
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.memory import ConversationSummaryMemory
 from langchain.schema import BasePromptTemplate
 from langchain.schema.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.schema.language_model import BaseLanguageModel
-from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.vectorstore import VectorStore
 from langchain.text_splitter import (
     Language,
     MarkdownTextSplitter,
-    PythonCodeTextSplitter,
+    RecursiveCharacterTextSplitter,
 )
 from langchain.vectorstores import Chroma
 from langchain_core.outputs import LLMResult
@@ -74,20 +71,8 @@ class RepoRagChatAssistant:
     DB_FOLDER = "chroma_db"
 
     def __init__(self, streamlit_output_placeholder: DeltaGenerator):
-        self.streamlit_output_placeholder = streamlit_output_placeholder
-        self.model = None
-        self.assistant_identity = None
-        self.db = None
-        self.retriever = None
-        self.memory = None
-        self.partial_steps_llm = None
-        self.combine_llm = None
-        self.qa_chain = None
-        self.repo_url = None
-        self.output_callback = None
-        self.embedding = None
-        self.last_formatted_message = None
-        self.repo_local_path = None
+        self.documentation_url = None
+        self.num_documents_to_retrieve = None
 
     @property
     def db_path(self) -> str:
@@ -153,7 +138,13 @@ class RepoRagChatAssistant:
 
         return RepoRagChatAssistant.SUCCESS_MSG
 
-    def load_repo(self, repo_url: str, repo_local_path: str, documentation_url: Optional[str] = None) -> str:
+    def load_repo(
+        self,
+        repo_url: str,
+        repo_local_path: str,
+        documentation_url: Optional[str] = None,
+        num_documents_to_retrieve: int = 4,
+    ) -> str:
         """Load the repository and documentation and create the vector DB.
 
         Executes one of the following (both require OpenAI embeddings - for this the model has to be loaded):
@@ -193,7 +184,7 @@ class RepoRagChatAssistant:
             self.db = self._create_db()
 
         # search_type="mmr" Max. Marginal Relevance - optimizes for similarity to query and diversity among documents
-        self.retriever = self.db.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+        self.create_retriever(num_documents_to_retrieve)
 
         # loading new repo/DB invalidates the qa_chain and memory
         self.qa_chain, self.memory = None, None
@@ -204,6 +195,10 @@ class RepoRagChatAssistant:
             self._create_qa_chain()
 
         return RepoRagChatAssistant.SUCCESS_MSG
+
+    def similarity_search_with_score(self, question: str) -> list[tuple[float, str]]:
+        if self.db:
+            return self.db.similarity_search_with_score(question, k=self.num_documents_to_retrieve)
 
     def _clone_or_update_git_repo(self) -> str:
         """Clones or updates the repository from self.repo_url to self.repo_path."""
@@ -314,6 +309,13 @@ class RepoRagChatAssistant:
 
         self.streamlit_output_placeholder.markdown("")  # clear the output
         return db
+
+    def create_retriever(self, num_documents_to_retrieve):
+        self.num_documents_to_retrieve = num_documents_to_retrieve
+        # search_type="mmr" Max. Marginal Relevance - optimizes for similarity to query and diversity among documents
+        self.retriever = self.db.as_retriever(
+            search_type="similarity", search_kwargs={"k": self.num_documents_to_retrieve}
+        )
 
     def _create_qa_chain(self) -> None:
         # initialize the output_callback with the current repo info

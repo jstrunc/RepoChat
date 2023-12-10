@@ -140,16 +140,24 @@ with sidebar_tab_settings.form(key="assistant_form"):
 with sidebar_tab_settings.form(key="repo_url_form"):
     st.markdown("## Repository")
     repo_url = st.text_input("URL:", value=default_repo_url)
-    repo_local_path = st.text_input(
-        "Local folder:",
-        value=default_repo_local_path,
-        help="Absolute path to folder where the repository will be cloned and the vector database stored.",
-    )
+
     documentation_url = st.text_input(
         "Documentation URL (optional):",
         value=default_documentation_url,
         help="Optional link to the documentation of the repository.\n\n"
         "All links from this URL will be parsed and added to the vector DB",
+    )
+    # with st.expander("Advanced Settings", expanded=False):    # use the expander when there is more detailed settings
+    repo_local_path = st.text_input(
+        "Local folder:",
+        value=default_repo_local_path,
+        help="Absolute path to folder where the repository will be cloned and the vector database stored.",
+    )
+    num_documents_to_retrieve = int(
+        st.text_input(
+            "Number of document chunks to retrieve from the vector DB per answer:",
+            value=default_num_documents_to_retrieve,
+        )
     )
     load_repository_clicked = st.form_submit_button(
         label="Load repository",
@@ -158,6 +166,13 @@ with sidebar_tab_settings.form(key="repo_url_form"):
 
     both_urls_valid = True
     if load_repository_clicked:
+        if (
+            st.session_state["assistant"].db
+            and st.session_state["assistant"].num_documents_to_retrieve != num_documents_to_retrieve
+        ):
+            # if repo/DB is already loaded and num_documents_to_retrieve changed just re-create the retriever
+            st.session_state["assistant"].create_retriever(num_documents_to_retrieve)
+
         if not url_valid(repo_url):
             st.error("Invalid or unreachable repository URL")
             both_urls_valid = False
@@ -167,7 +182,9 @@ with sidebar_tab_settings.form(key="repo_url_form"):
 
     if (load_repository_clicked or not st.session_state["default_repo_tried"]) and both_urls_valid:
         with st.spinner("Loading repository..."):
-            message = st.session_state["assistant"].load_repo(repo_url, repo_local_path, documentation_url)
+            message = st.session_state["assistant"].load_repo(
+                repo_url, repo_local_path, documentation_url, num_documents_to_retrieve
+            )
         if message == RepoRagChatAssistant.SUCCESS_MSG:
             if st.session_state["default_repo_tried"]:
                 st.session_state.messages = [initial_message]
@@ -190,7 +207,7 @@ if st.session_state["assistant"].qa_chain:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if "full_result" in message:
-                docs_with_similarity = st.session_state["assistant"].db.similarity_search_with_score(
+                docs_with_similarity = st.session_state["assistant"].similarity_search_with_score(
                     message["full_result"]["question"]
                 )
 

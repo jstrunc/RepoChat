@@ -243,56 +243,65 @@ class RepoRagChatAssistant:
                     self.streamlit_output_placeholder.progress(int(current) / int(total), text=msg)
 
     def _create_db(self, persist: bool = True) -> VectorStore:
+        documentation_links = get_links(self.documentation_url) if self.documentation_url else []
+        py_files = glob.glob(f"{self.repo_path}/**/*.py", recursive=True)  # get all .py files in the repo
+        md_files = glob.glob(f"{self.repo_path}/**/*.md", recursive=True)
         chunks = []
-
-        current_step = 1
-        total_steps = 2
-        if self.documentation_url:
-            total_steps += 1
-        if persist:
-            total_steps += 1
+        progressbar_current = 0
+        long_step = 10
+        progressbar_total = len(py_files) + len(md_files) + len(documentation_links) * long_step + long_step
+        init_msg = "##### Initial creation of the vector database - might take couple of minutes:"
 
         # Load documents from various sources and split to chunks:
+        # TODO: abstract the following 3 parts into a single function
         # 1. Local Python files
-        msg = (
-            "##### Initial creation of the vector database - might take couple of minutes:"
-            f"\n\n- {current_step}/{total_steps} Loading and chunking .py files..."
+        py_documents = []
+        for i, py_file in enumerate(py_files):
+            progressbar_current += 1
+            msg = f"{init_msg}\n\n- {i}/{len(py_files)} Loading and chunking .py files..."
+            self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
+            try:
+                py_documents.append(TextLoader(py_file).load()[0])
+            except Exception as e:
+                print(f"Error loading {py_file}: {e}. \nSkipping the file.")
+        # python_splitter = PythonCodeTextSplitter(chunk_size=1000, chunk_overlap=200)
+        python_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
         )
-        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
-        python_loader = GenericLoader.from_filesystem(
-            self.repo_path,
-            glob="**/*",
-            suffixes=[".py"],
-            parser=LanguageParser(language=Language.PYTHON),
-        )
-        python_splitter = PythonCodeTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks.extend(python_splitter.split_documents(python_loader.load()))
+        chunks.extend(python_splitter.split_documents(py_documents))
+        init_msg = msg
 
         # 2. Local Readme files
-        current_step += 1
-        msg += f"\n\n- {current_step}/{total_steps} Loading and chunking .md files..."
-        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
-        # GenericLoader doesn't work for .md files, lets do it manualy with the use of UnstructuredMarkdownLoader
-        md_files = glob.glob(f"{self.repo_path}/**/*.md", recursive=True)  # get all .md files in the repo
-        md_documents = [UnstructuredMarkdownLoader(md_file).load()[0] for md_file in md_files]
+        self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
+        md_documents = []
+        for i, md_file in enumerate(md_files):
+            progressbar_current += 1
+            msg = f"{init_msg}\n\n- {i}/{len(md_files)} Loading and chunking .md files..."
+            self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
+            md_documents.append(UnstructuredMarkdownLoader(md_file).load()[0])
         md_splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=200)
         chunks.extend(md_splitter.split_documents(md_documents))
+        init_msg = msg
 
         # 3. Online HTML documentation
         if self.documentation_url:
-            current_step += 1
-            msg += f"\n\n- {current_step}/{total_steps} Loading and chunking online documentation..."
-            self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
-            links = get_links(self.documentation_url)
-            web_loader = WebBaseLoader(web_paths=links)
-            chunks.extend(
-                python_splitter.split_documents(web_loader.load())
-            )  # doc has python code, use also python splitter
+            web_loader = WebBaseLoader(web_paths=documentation_links)
+            web_documents = []
+            for i, web_doc in enumerate(web_loader.lazy_load()):
+                progressbar_current += long_step
+                msg = f"{init_msg}\n\n- {i}/{len(documentation_links)} Loading and chunking online documentation..."
+                self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
+                web_documents.append(web_doc)
+            # doc has python code, use also python splitter
+            chunks.extend(python_splitter.split_documents(web_documents))
+            init_msg = msg
 
         # create new DB with embeddings
-        current_step += 1
-        msg += f"\n\n- {current_step}/{total_steps} Creating the vector database..."
-        self.streamlit_output_placeholder.progress(current_step / total_steps, text=msg)
+        progressbar_current += long_step
+        msg = f"{init_msg}\n\n- Creating the vector database..."
+        self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
         db = Chroma.from_documents(
             chunks,
             self.embedding,
@@ -308,7 +317,7 @@ class RepoRagChatAssistant:
 
     def _create_qa_chain(self) -> None:
         # initialize the output_callback with the current repo info
-        repo = Repo(self.repo_path)
+        repo = git.Repo(self.repo_path)
         self.output_callback.repo_branch = repo.active_branch.name  # used to create source links for the output
         self.output_callback.repo_url = self.repo_url
         self.output_callback.repo_path = self.repo_path

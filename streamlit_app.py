@@ -22,6 +22,17 @@ def url_valid(url: str) -> bool:
     return False
 
 
+def change_label_style(label, font_size='12px'):
+    """Helper function to change label style"""
+    html = f"""
+    <script>
+        var elems = window.parent.document.querySelectorAll('p');
+        var elem = Array.from(elems).find(x => x.innerText == '{label}');
+        elem.style.fontSize = '{font_size}';
+    </script>
+    """
+    st.components.v1.html(html, height=0)
+
 
 api_key_default = os.environ.get("OPENAI_API_KEY", default="")
 available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
@@ -57,7 +68,11 @@ if "message_placeholder" not in st.session_state:
 if "assistant" not in st.session_state:
     st.session_state["assistant"] = RepoRagChatAssistant(st.session_state["message_placeholder"])
 
-sidebar_tab_settings, sidebar_tab_about = st.sidebar.tabs(["Settings", "About"])
+sidebar_tab_settings, sidebar_tab_about = st.sidebar.tabs(
+    # hacky way to change font size - use latex: rf"$\textsf{{\normalsize {label}}}$"
+    # sizes: \Huge \huge \LARGE \Large \large \normalsize \small \footnotesize
+    [r"$\textsf{\large Settings}$", r"$\textsf{\large About}$"]
+)
 
 with sidebar_tab_about:
     st.markdown(

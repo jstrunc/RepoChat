@@ -8,12 +8,14 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 import glob
 import os
+import re
+import subprocess
 from typing import Any, Optional
 from urllib.parse import urljoin, urlsplit
 
+import git
 import requests
 from bs4 import BeautifulSoup
-from git import GitCommandError, Repo
 from langchain.chains import ReduceDocumentsChain, RetrievalQAWithSourcesChain
 from langchain.chains.combine_documents.map_reduce import MapReduceDocumentsChain
 from langchain.chains.combine_documents.stuff import StuffDocumentsChain
@@ -205,22 +207,40 @@ class RepoRagChatAssistant:
 
     def _clone_or_update_git_repo(self) -> str:
         """Clones or updates the repository from self.repo_url to self.repo_path."""
-        repo = None
-
-        if os.path.exists(self.repo_path) and (repo_content := os.listdir(self.repo_path)) and ".git" in repo_content:
-            repo = Repo(self.repo_path)
-            repo.remotes.origin.pull()
+        if os.path.exists(self.repo_path):
+            try:
+                repo = git.Repo(self.repo_path)
+                repo.remotes.origin.pull()
+            except git.GitError as e:
+                return f"Error while pulling the repository {self.repo_url}: {str(e)}"
         else:
             try:
-                repo = Repo.clone_from(self.repo_url, to_path=self.repo_path)
-            except GitCommandError as e:
-                repo_not_found_msg = "Repository not found"
-                if repo_not_found_msg in e.stderr:
-                    return f"{repo_not_found_msg} at URL: {self.repo_url}\nFix the URL and try again."
-        if repo:
-            return RepoRagChatAssistant.SUCCESS_MSG
-        else:
-            return "Unknown error while cloning the repository."
+                self._clone_git_repo_in_subprocess()
+                return RepoRagChatAssistant.SUCCESS_MSG
+            except Exception as e:
+                return f"Error while cloning the repository {self.repo_url}: {str(e)}"
+
+    def _clone_git_repo_in_subprocess(self) -> None:
+        """Clones the repository in a subprocess and updates the Streamlit progressbar - useful for large repositories."""
+        self.streamlit_output_placeholder.progress(0, text="Cloning repo:")
+        with subprocess.Popen(
+            [
+                "git",
+                "clone",
+                "--progress",  # necessary to force the output of the git command to stderr
+                self.repo_url,
+                self.repo_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # git clone --progress outputs to stderr, redirect to stdout
+        ) as p:
+            for line in iter(lambda: p.stdout.read1().decode('utf-8'), ""):
+                receiving_objects_token = "Receiving objects"
+                if line.startswith(receiving_objects_token):
+                    line = line.split(receiving_objects_token)[-1]  # take just the last update
+                    current, total = re.findall(r'\((\d+)/(\d+)\)', line)[0]
+                    msg = f"Cloning repo: {receiving_objects_token}{line}"
+                    self.streamlit_output_placeholder.progress(int(current) / int(total), text=msg)
 
     def _create_db(self, persist: bool = True) -> VectorStore:
         chunks = []

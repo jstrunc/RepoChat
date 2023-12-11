@@ -68,8 +68,22 @@ class RepoRagChatAssistant:
     DB_FOLDER = "chroma_db"
 
     def __init__(self, streamlit_output_placeholder: DeltaGenerator):
+        self.streamlit_output_placeholder = streamlit_output_placeholder
+        self.model = None
+        self.assistant_identity = None
+        self.db = None
+        self.retriever = None
+        self.memory = None
+        self.partial_steps_llm = None
+        self.combine_llm = None
+        self.qa_chain = None
+        self.repo_local_path = None
+        self.repo_url = None
         self.documentation_url = None
         self.num_documents_to_retrieve = None
+        self.output_callback = None
+        self.embedding = None
+        self.last_formatted_message = None
 
     @property
     def db_path(self) -> str:

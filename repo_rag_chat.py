@@ -253,12 +253,11 @@ class RepoRagChatAssistant:
         documentation_links = get_links(self.documentation_url) if self.documentation_url else []
         chunks = []
         progressbar_current = 0
-        long_step = 10
         progressbar_total = len(py_files) + len(md_files) + len(documentation_links) * long_step + long_step
         progress_msg = "##### Initial creation of the vector database - might take couple of minutes:"
 
         def load_and_split(
-            files: list[str], language: Language, loader: Type[BaseLoader] = TextLoader
+            files: list[str], language: Language, loader: Type[BaseLoader] = TextLoader, progress_step: int = 1
         ) -> list[Document]:
             """Loads and splits files into chunks using specific language separator; updates the global progressbar."""
             if not files:
@@ -270,7 +269,7 @@ class RepoRagChatAssistant:
             file_type = "online documentation" if loader is WebBaseLoader else f"{language.value} files"
 
             for i, file in enumerate(files):
-                progressbar_current += 1
+                progressbar_current += progress_step
                 msg = f"{progress_msg}\n\n- {i}/{len(files)} Loading and splitting {file_type}..."
                 self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
                 try:
@@ -288,7 +287,7 @@ class RepoRagChatAssistant:
         # Load and split to chunks documents from various sources:
         chunks.extend(load_and_split(py_files, Language.PYTHON))
         chunks.extend(load_and_split(md_files, Language.MARKDOWN))
-        chunks.extend(load_and_split(documentation_links, Language.PYTHON, WebBaseLoader))
+        chunks.extend(load_and_split(documentation_links, Language.PYTHON, WebBaseLoader, 10))
 
         # create new DB with embeddings
         progressbar_current += long_step

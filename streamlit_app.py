@@ -39,6 +39,7 @@ available_models = ("gpt-3.5-turbo-1106", "gpt-4-1106-preview")
 default_repo_url = "https://github.com/IBM/ibm-generative-ai"
 default_documentation_url = "https://ibm.github.io/ibm-generative-ai/index.html"
 default_repo_local_path = "/tmp/repo_chat"
+default_num_documents_to_retrieve = 4
 initial_message = {
     "role": "assistant",
     "content": "Hi, I'm RepoChat. I can answer questions about any code repository.",

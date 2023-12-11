@@ -10,7 +10,7 @@ import glob
 import os
 import re
 import subprocess
-from typing import Any, Optional
+from typing import Any, Optional, Type
 from urllib.parse import urljoin, urlsplit
 
 import git
@@ -27,19 +27,16 @@ from langchain.chains.qa_with_sources.map_reduce_prompt import (
 )
 from langchain.chat_models import ChatOpenAI
 from langchain.document_loaders import TextLoader, WebBaseLoader
-from langchain.document_loaders.markdown import UnstructuredMarkdownLoader
+from langchain.document_loaders.base import BaseLoader
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.memory import ConversationSummaryMemory
 from langchain.schema import BasePromptTemplate
 from langchain.schema.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain.schema.language_model import BaseLanguageModel
 from langchain.schema.vectorstore import VectorStore
-from langchain.text_splitter import (
-    Language,
-    MarkdownTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
+from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
+from langchain_core.documents import Document
 from langchain_core.outputs import LLMResult
 from langchain_core.prompts import PromptTemplate
 from streamlit.delta_generator import DeltaGenerator
@@ -59,7 +56,7 @@ def get_links(url: str):
                 if website_netloc in absolute_url and "#" not in absolute_url and absolute_url not in links:
                     links.append(absolute_url)
     except Exception as e:
-        print(f"Error parsing {url}: {e}")
+        print(f"Error parsing {url}: {e}", file=sys.stderr)
 
     return links
 
@@ -183,7 +180,6 @@ class RepoRagChatAssistant:
                 return result
             self.db = self._create_db()
 
-        # search_type="mmr" Max. Marginal Relevance - optimizes for similarity to query and diversity among documents
         self.create_retriever(num_documents_to_retrieve)
 
         # loading new repo/DB invalidates the qa_chain and memory
@@ -238,64 +234,51 @@ class RepoRagChatAssistant:
                     self.streamlit_output_placeholder.progress(int(current) / int(total), text=msg)
 
     def _create_db(self, persist: bool = True) -> VectorStore:
-        documentation_links = get_links(self.documentation_url) if self.documentation_url else []
         py_files = glob.glob(f"{self.repo_path}/**/*.py", recursive=True)  # get all .py files in the repo
         md_files = glob.glob(f"{self.repo_path}/**/*.md", recursive=True)
+        documentation_links = get_links(self.documentation_url) if self.documentation_url else []
         chunks = []
         progressbar_current = 0
         long_step = 10
         progressbar_total = len(py_files) + len(md_files) + len(documentation_links) * long_step + long_step
-        init_msg = "##### Initial creation of the vector database - might take couple of minutes:"
+        progress_msg = "##### Initial creation of the vector database - might take couple of minutes:"
 
-        # Load documents from various sources and split to chunks:
-        # TODO: abstract the following 3 parts into a single function
-        # 1. Local Python files
-        py_documents = []
-        for i, py_file in enumerate(py_files):
-            progressbar_current += 1
-            msg = f"{init_msg}\n\n- {i}/{len(py_files)} Loading and chunking .py files..."
-            self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
-            try:
-                py_documents.append(TextLoader(py_file).load()[0])
-            except Exception as e:
-                print(f"Error loading {py_file}: {e}. \nSkipping the file.")
-        # python_splitter = PythonCodeTextSplitter(chunk_size=1000, chunk_overlap=200)
-        python_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            separators=RecursiveCharacterTextSplitter.get_separators_for_language(Language.PYTHON),
-        )
-        chunks.extend(python_splitter.split_documents(py_documents))
-        init_msg = msg
+        def load_and_split(
+            files: list[str], language: Language, loader: Type[BaseLoader] = TextLoader
+        ) -> list[Document]:
+            """Loads and splits files into chunks using specific language separator; updates the global progressbar."""
+            if not files:
+                return []
 
-        # 2. Local Readme files
-        self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
-        md_documents = []
-        for i, md_file in enumerate(md_files):
-            progressbar_current += 1
-            msg = f"{init_msg}\n\n- {i}/{len(md_files)} Loading and chunking .md files..."
-            self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
-            md_documents.append(UnstructuredMarkdownLoader(md_file).load()[0])
-        md_splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks.extend(md_splitter.split_documents(md_documents))
-        init_msg = msg
+            nonlocal progress_msg
+            nonlocal progressbar_current
+            documents = []
+            file_type = "online documentation" if loader is WebBaseLoader else f"{language.value} files"
 
-        # 3. Online HTML documentation
-        if self.documentation_url:
-            web_loader = WebBaseLoader(web_paths=documentation_links)
-            web_documents = []
-            for i, web_doc in enumerate(web_loader.lazy_load()):
-                progressbar_current += long_step
-                msg = f"{init_msg}\n\n- {i}/{len(documentation_links)} Loading and chunking online documentation..."
+            for i, file in enumerate(files):
+                progressbar_current += 1
+                msg = f"{progress_msg}\n\n- {i}/{len(files)} Loading and splitting {file_type}..."
                 self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
-                web_documents.append(web_doc)
-            # doc has python code, use also python splitter
-            chunks.extend(python_splitter.split_documents(web_documents))
-            init_msg = msg
+                try:
+                    documents.append(loader(file).load()[0])
+                except Exception as e:
+                    print(f"Error loading {file}: {e}. \nSkipping the file.", file=sys.stderr)
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                separators=RecursiveCharacterTextSplitter.get_separators_for_language(language),
+            )
+            progress_msg = msg
+            return splitter.split_documents(documents)
+
+        # Load and split to chunks documents from various sources:
+        chunks.extend(load_and_split(py_files, Language.PYTHON))
+        chunks.extend(load_and_split(md_files, Language.MARKDOWN))
+        chunks.extend(load_and_split(documentation_links, Language.PYTHON, WebBaseLoader))
 
         # create new DB with embeddings
         progressbar_current += long_step
-        msg = f"{init_msg}\n\n- Creating the vector database..."
+        msg = f"{progress_msg}\n\n- Creating the vector database..."
         self.streamlit_output_placeholder.progress(progressbar_current / progressbar_total, text=msg)
         db = Chroma.from_documents(
             chunks,

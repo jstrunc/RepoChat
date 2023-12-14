@@ -253,6 +253,7 @@ class RepoRagChatAssistant:
         documentation_links = get_links(self.documentation_url) if self.documentation_url else []
         chunks = []
         progressbar_current = 0
+        long_step = 10
         progressbar_total = len(py_files) + len(md_files) + len(documentation_links) * long_step + long_step
         progress_msg = "##### Initial creation of the vector database - might take couple of minutes:"
 
@@ -287,7 +288,7 @@ class RepoRagChatAssistant:
         # Load and split to chunks documents from various sources:
         chunks.extend(load_and_split(py_files, Language.PYTHON))
         chunks.extend(load_and_split(md_files, Language.MARKDOWN))
-        chunks.extend(load_and_split(documentation_links, Language.PYTHON, WebBaseLoader, 10))
+        chunks.extend(load_and_split(documentation_links, Language.PYTHON, WebBaseLoader, long_step))
 
         # create new DB with embeddings
         progressbar_current += long_step
